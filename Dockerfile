@@ -38,8 +38,12 @@ ENV WEB_CONCURRENCY=2 \
     PORT=8000 \
     PYTHONPATH=/app
 
-# Start via Gunicorn; bind to PORT provided by platform; log to stdout/stderr
+# Copy entrypoint
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Start via entrypoint; binds to PORT and validates import before boot
 WORKDIR /app
-CMD ["sh", "-c", "gunicorn -w ${WEB_CONCURRENCY:-2} -k gthread --threads 4 --timeout ${GUNICORN_TIMEOUT:-120} -b 0.0.0.0:${PORT:-8000} app:app --log-level info --access-logfile - --error-logfile -"]
+CMD ["/app/entrypoint.sh"]
 
 
