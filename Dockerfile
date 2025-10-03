@@ -20,7 +20,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Python dependencies separately for better caching
 # Copy requirements from the same directory as this Dockerfile (backend/)
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN python -m pip install --upgrade pip && \
+    pip install --no-cache-dir -r /app/requirements.txt
 
 # Copy backend source (everything in backend/)
 COPY . /app
