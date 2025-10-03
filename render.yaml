@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: ai-meeting-assistant-backend
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: SECRET_KEY
+        generateValue: true
+      - key: NEON_DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: RAPIDAPI_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+    healthCheckPath: /api/health
