@@ -14,11 +14,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies separately for better caching
-COPY requirements.txt /app/requirements.txt
+# Copy requirements from repo root (Render often builds from repo root)
+COPY backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy backend source
-COPY . /app
+# Copy backend source (from repo root into /app)
+COPY backend/ /app
 
 # Expose Gunicorn port
 EXPOSE 8000
@@ -31,8 +32,8 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=5 CMD \
 ENV WEB_CONCURRENCY=2 \
     GUNICORN_TIMEOUT=120
 
-# Start via Gunicorn; the Flask app is created as `app` in app.py
+# Start via Gunicorn; the Flask app is defined as `app` in /app/app.py
 WORKDIR /app
-CMD ["bash", "-lc", "cd backend && gunicorn -w ${WEB_CONCURRENCY} -k gthread --threads 4 --timeout ${GUNICORN_TIMEOUT} -b 0.0.0.0:8000 app:app"]
+CMD ["bash", "-lc", "gunicorn -w ${WEB_CONCURRENCY} -k gthread --threads 4 --timeout ${GUNICORN_TIMEOUT} -b 0.0.0.0:8000 app:app"]
 
 
