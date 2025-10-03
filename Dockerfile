@@ -14,12 +14,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies separately for better caching
-# Copy requirements from repo root (Render often builds from repo root)
-COPY backend/requirements.txt /app/requirements.txt
+# Copy requirements from the same directory as this Dockerfile (backend/)
+COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy backend source (from repo root into /app)
-COPY backend/ /app
+# Copy backend source (everything in backend/)
+COPY . /app
 
 # Expose Gunicorn port
 EXPOSE 8000
