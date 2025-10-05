@@ -31,7 +31,7 @@ def get_tasks():
     """Get all tasks for a user"""
     try:
         raw_user_id = request.args.get('user_id')
-        logger.info(f"📋 Fetching tasks for user_id: {user_id}")
+        logger.info(f"📋 Fetching tasks for raw_user_id: {raw_user_id}")
         
         if not raw_user_id:
             logger.warning("❌ No user_id provided in request")
@@ -39,6 +39,7 @@ def get_tasks():
 
         import re
         is_uuid = re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', raw_user_id or '', re.IGNORECASE) is not None
+        logger.info(f"🔎 user_id_mode: {'uuid' if is_uuid else 'firebase_uid'}")
         
         # Get filter parameters
         status = request.args.get('status')  # pending, in_progress, completed

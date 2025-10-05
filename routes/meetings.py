@@ -371,30 +371,38 @@ def reprocess_meeting(meeting_id):
 def get_meeting_stats():
     """Get meeting statistics for a user"""
     try:
-        user_id = request.args.get('user_id')
-        if not user_id:
+        raw_user_id = request.args.get('user_id')
+        if not raw_user_id:
             return jsonify({'error': 'User ID is required'}), 400
-        
+        import re
+        is_uuid = re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', raw_user_id or '', re.IGNORECASE) is not None
+        if is_uuid:
+            where_sql = "m.user_id = %s"
+            where_param = raw_user_id
+        else:
+            where_sql = "m.user_id = (SELECT id FROM users WHERE firebase_uid = %s)"
+            where_param = raw_user_id
+
         # Get various statistics
         stats = {}
         
         # Total meetings
-        total_query = """
+        total_query = f"""
         SELECT COUNT(*) as count
         FROM meetings m
-        WHERE m.user_id = %s
+        WHERE {where_sql}
         """
-        total_result = db.execute_query(total_query, (user_id,))
+        total_result = db.execute_query(total_query, (where_param,))
         stats['total_meetings'] = total_result[0]['count'] if total_result else 0
         
         # Meetings by status
-        status_query = """
+        status_query = f"""
         SELECT status, COUNT(*) as count
         FROM meetings m
-        WHERE m.user_id = %s 
+        WHERE {where_sql}
         GROUP BY status
         """
-        status_result = db.execute_query(status_query, (user_id,))
+        status_result = db.execute_query(status_query, (where_param,))
         stats['by_status'] = {row['status']: row['count'] for row in status_result}
         
         # Total tasks
@@ -419,21 +427,21 @@ def get_meeting_stats():
         stats['tasks_by_status'] = {row['status']: row['count'] for row in task_status_result}
         
         # Recent activity (last 7 days)
-        recent_query = """
+        recent_query = f"""
         SELECT COUNT(*) as count
         FROM meetings m
-        WHERE m.user_id = %s AND m.created_at > NOW() - INTERVAL '7 days'
+        WHERE {where_sql} AND m.created_at > NOW() - INTERVAL '7 days'
         """
-        recent_result = db.execute_query(recent_query, (user_id,))
+        recent_result = db.execute_query(recent_query, (where_param,))
         stats['recent_meetings'] = recent_result[0]['count'] if recent_result else 0
         
         # Total duration
-        duration_query = """
+        duration_query = f"""
         SELECT SUM(duration) as total_duration
         FROM meetings m
-        WHERE m.user_id = %s AND m.duration IS NOT NULL
+        WHERE {where_sql} AND m.duration IS NOT NULL
         """
-        duration_result = db.execute_query(duration_query, (user_id,))
+        duration_result = db.execute_query(duration_query, (where_param,))
         total_duration = duration_result[0]['total_duration'] if duration_result and duration_result[0]['total_duration'] else 0
         stats['total_duration_minutes'] = int(total_duration)
         stats['total_duration_hours'] = round(total_duration / 60, 2)
