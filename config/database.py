@@ -23,11 +23,17 @@ class Database:
     def _initialize_pool(self):
         """Initialize the connection pool"""
         try:
+            # Connection tuning for managed Postgres (Neon/Render): keepalives + SSL
             self._pool = psycopg2.pool.ThreadedConnectionPool(
                 minconn=self.min_connections,
                 maxconn=self.max_connections,
                 dsn=self.connection_string,
-                cursor_factory=RealDictCursor
+                cursor_factory=RealDictCursor,
+                keepalives=1,
+                keepalives_idle=30,
+                keepalives_interval=10,
+                keepalives_count=5,
+                sslmode='require'
             )
             print(f"[SUCCESS] Database connection pool initialized: {self.min_connections}-{self.max_connections} connections")
         except Exception as e:
@@ -41,14 +47,29 @@ class Database:
                 with self._pool_lock:
                     if self._pool is None:
                         self._initialize_pool()
-            
-            return self._pool.getconn()
+            conn = self._pool.getconn()
+            # Replace closed or broken connections
+            if getattr(conn, 'closed', 0):
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                return psycopg2.connect(
+                    self.connection_string,
+                    cursor_factory=RealDictCursor
+                )
+            return conn
         except Exception as e:
             print(f"[ERROR] Failed to get connection from pool: {e}")
             # Fallback to direct connection if pool fails
             return psycopg2.connect(
                 self.connection_string,
-                cursor_factory=RealDictCursor
+                cursor_factory=RealDictCursor,
+                keepalives=1,
+                keepalives_idle=30,
+                keepalives_interval=10,
+                keepalives_count=5,
+                sslmode='require'
             )
     
     def _return_connection_to_pool(self, conn):
@@ -78,8 +99,8 @@ class Database:
                 self._return_connection_to_pool(conn)
     
     def execute_query(self, query, params=None):
-        """Execute a query and return results"""
-        try:
+        """Execute a query and return results with single retry on closed connections"""
+        def _run():
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(query, params)
@@ -87,6 +108,24 @@ class Database:
                         return cursor.fetchall()
                     conn.commit()
                     return cursor.rowcount
+        try:
+            return _run()
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            msg = str(e).lower()
+            if 'closed' in msg or 'server closed the connection' in msg or 'connection already closed' in msg:
+                print('[WARN] Connection closed detected. Reinitializing pool and retrying once...')
+                with self._pool_lock:
+                    try:
+                        if self._pool:
+                            self._pool.closeall()
+                    except Exception:
+                        pass
+                    self._initialize_pool()
+                return _run()
+            print(f"[ERROR] Database operational/interface error: {e}")
+            print(f"[ERROR] Query: {query}")
+            print(f"[ERROR] Params: {params}")
+            raise e
         except psycopg2.Error as e:
             print(f"[ERROR] Database error: {e}")
             print(f"[ERROR] Query: {query}")
