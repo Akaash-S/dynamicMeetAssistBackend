@@ -77,29 +77,36 @@ def get_meetings():
         raw_user_id = request.args.get('user_id')
         if not raw_user_id:
             return jsonify({'error': 'User ID is required'}), 400
-        user_id = _resolve_db_user_id(raw_user_id)
-        if not user_id:
-            return jsonify({'error': f'Unknown or invalid user_id: {raw_user_id}'}), 400
+        # Decide filter strategy: UUID compare or firebase_uid subselect to avoid uuid cast errors
+        import re
+        is_uuid = re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', raw_user_id or '', re.IGNORECASE) is not None
         
         # Get meetings with pagination
         page = int(request.args.get('page', 1))
         limit = int(request.args.get('limit', 10))
         offset = (page - 1) * limit
         
-        query = """
+        if is_uuid:
+            where_sql = "m.user_id = %s"
+            where_param = raw_user_id
+        else:
+            where_sql = "m.user_id = (SELECT id FROM users WHERE firebase_uid = %s)"
+            where_param = raw_user_id
+
+        query = f"""
         SELECT m.*, 
                COUNT(t.id) as task_count,
                COUNT(tl.id) as timeline_count
         FROM meetings m
         LEFT JOIN tasks t ON m.id = t.meeting_id
         LEFT JOIN timeline tl ON m.id = tl.meeting_id
-        WHERE m.user_id = %s
+        WHERE {where_sql}
         GROUP BY m.id
         ORDER BY m.created_at DESC
         LIMIT %s OFFSET %s
         """
         
-        meetings = db.execute_query(query, (user_id, limit, offset))
+        meetings = db.execute_query(query, (where_param, limit, offset))
         print(f"📊 Found {len(meetings) if meetings else 0} meetings for user {user_id}")
         
         # Debug: Print meeting IDs to check format
@@ -108,12 +115,12 @@ def get_meetings():
                 print(f"📊 Meeting ID: {meeting['id']} (type: {type(meeting['id'])})")
         
         # Get total count
-        count_query = """
+        count_query = f"""
         SELECT COUNT(*) as total 
         FROM meetings m
-        WHERE m.user_id = %s
+        WHERE {where_sql}
         """
-        count_result = db.execute_query(count_query, (user_id,))
+        count_result = db.execute_query(count_query, (where_param,))
         total_count = count_result[0]['total'] if count_result else 0
         
         # Format response

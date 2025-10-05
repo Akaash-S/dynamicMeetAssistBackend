@@ -31,14 +31,14 @@ def get_tasks():
     """Get all tasks for a user"""
     try:
         raw_user_id = request.args.get('user_id')
-        user_id = _resolve_db_user_id(raw_user_id)
         logger.info(f"📋 Fetching tasks for user_id: {user_id}")
         
         if not raw_user_id:
             logger.warning("❌ No user_id provided in request")
             return jsonify({'error': 'User ID is required'}), 400
-        if not user_id:
-            return jsonify({'error': f'Unknown or invalid user_id: {raw_user_id}'}), 400
+
+        import re
+        is_uuid = re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', raw_user_id or '', re.IGNORECASE) is not None
         
         # Get filter parameters
         status = request.args.get('status')  # pending, in_progress, completed
@@ -46,13 +46,20 @@ def get_tasks():
         meeting_id = request.args.get('meeting_id')
         
         # Build query - use database user_id directly
-        query = """
+        if is_uuid:
+            where_sql = "t.user_id = %s"
+            where_param = raw_user_id
+        else:
+            where_sql = "t.user_id = (SELECT id FROM users WHERE firebase_uid = %s)"
+            where_param = raw_user_id
+
+        query = f"""
         SELECT t.*, m.title as meeting_title 
         FROM tasks t
         JOIN meetings m ON t.meeting_id = m.id
-        WHERE t.user_id = %s
+        WHERE {where_sql}
         """
-        params = [user_id]
+        params = [where_param]
         
         if status:
             query += " AND t.status = %s"
@@ -388,54 +395,54 @@ def get_task_stats():
         stats = {}
         
         # Total tasks
-        total_query = """
+        total_query = f"""
         SELECT COUNT(*) as count
         FROM tasks t
-        WHERE t.user_id = %s
+        WHERE {where_sql}
         """
-        total_result = db.execute_query(total_query, (user_id,))
+        total_result = db.execute_query(total_query, (where_param,))
         stats['total_tasks'] = total_result[0]['count'] if total_result else 0
         
         # Tasks by status
-        status_query = """
+        status_query = f"""
         SELECT status, COUNT(*) as count
         FROM tasks t
-        WHERE t.user_id = %s 
+        WHERE {where_sql}
         GROUP BY status
         """
-        status_result = db.execute_query(status_query, (user_id,))
+        status_result = db.execute_query(status_query, (where_param,))
         stats['by_status'] = {row['status']: row['count'] for row in status_result}
         
         # Tasks by priority
-        priority_query = """
+        priority_query = f"""
         SELECT priority, COUNT(*) as count
         FROM tasks t
-        WHERE t.user_id = %s 
+        WHERE {where_sql}
         GROUP BY priority
         """
-        priority_result = db.execute_query(priority_query, (user_id,))
+        priority_result = db.execute_query(priority_query, (where_param,))
         stats['by_priority'] = {row['priority']: row['count'] for row in priority_result}
         
         # Overdue tasks
-        overdue_query = """
+        overdue_query = f"""
         SELECT COUNT(*) as count
         FROM tasks t
-        WHERE t.user_id = %s 
+        WHERE {where_sql}
         AND t.deadline < NOW() 
         AND t.status != 'completed'
         """
-        overdue_result = db.execute_query(overdue_query, (user_id,))
+        overdue_result = db.execute_query(overdue_query, (where_param,))
         stats['overdue_tasks'] = overdue_result[0]['count'] if overdue_result else 0
         
         # Due this week
-        week_query = """
+        week_query = f"""
         SELECT COUNT(*) as count
         FROM tasks t
-        WHERE t.user_id = %s 
+        WHERE {where_sql}
         AND t.deadline BETWEEN NOW() AND NOW() + INTERVAL '7 days'
         AND t.status != 'completed'
         """
-        week_result = db.execute_query(week_query, (user_id,))
+        week_result = db.execute_query(week_query, (where_param,))
         stats['due_this_week'] = week_result[0]['count'] if week_result else 0
         
         # Completion rate
