@@ -23,20 +23,21 @@ from middleware.rate_limiting import limiter
 def create_app():
     app = Flask(__name__)
     
-    # Configure CORS for all origins on API routes
-    # This allows the React frontend to call APIs without CORS issues
-    CORS(app, 
-         resources={
-             r"/api/*": {
-                 "origins": "*",  # Allow all origins for API routes
-                 "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-                 "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
-                 "supports_credentials": False
-             }
-         },
-         # Handle preflight OPTIONS requests
-         send_wildcard=False,
-         automatic_options=True
+    # Configure CORS for API routes; allow configurable origins via env
+    cors_origins = os.getenv('CORS_ORIGINS', '*')
+    allowed_origins = [origin.strip() for origin in cors_origins.split(',')] if cors_origins else ['*']
+    CORS(
+        app,
+        resources={
+            r"/api/*": {
+                "origins": allowed_origins,
+                "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+                "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
+                "supports_credentials": False,
+            }
+        },
+        send_wildcard=True,
+        automatic_options=True,
     )
     
     # Configuration
@@ -88,10 +89,10 @@ def create_app():
     # Global error handlers
     @app.errorhandler(400)
     def bad_request(error):
-        print(f"❌ 400 Bad Request: {error}")
-        print(f"❌ Request URL: {request.url}")
-        print(f"❌ Request method: {request.method}")
-        print(f"❌ Request headers: {dict(request.headers)}")
+        print(f"400 Bad Request: {error}")
+        print(f"Request URL: {request.url}")
+        print(f"Request method: {request.method}")
+        print(f"Request headers: {dict(request.headers)}")
         return jsonify({
             'error': 'Bad Request',
             'message': str(error),

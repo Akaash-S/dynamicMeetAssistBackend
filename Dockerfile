@@ -44,6 +44,8 @@ COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 # Start via entrypoint; binds to PORT and validates import before boot
+# Pass through CORS origins (can be overridden at deploy)
+ENV CORS_ORIGINS="*"
 WORKDIR /app
 CMD ["/app/entrypoint.sh"]
 
