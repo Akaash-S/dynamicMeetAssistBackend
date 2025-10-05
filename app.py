@@ -23,22 +23,28 @@ from middleware.rate_limiting import limiter
 def create_app():
     app = Flask(__name__)
     
-    # Configure CORS for API routes; allow configurable origins via env
+    # Configure CORS for API routes; permissive fallback to fix preflight immediately
     cors_origins = os.getenv('CORS_ORIGINS', '*')
-    allowed_origins = [origin.strip() for origin in cors_origins.split(',')] if cors_origins else ['*']
-    CORS(
-        app,
-        resources={
-            r"/api/*": {
-                "origins": allowed_origins,
-                "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-                "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
-                "supports_credentials": False,
-            }
-        },
-        send_wildcard=True,
-        automatic_options=True,
-    )
+    allowed_origins = [origin.strip() for origin in cors_origins.split(',')] if (cors_origins and cors_origins != '*') else '*'
+    CORS(app, resources={r"/api/*": {"origins": allowed_origins}}, supports_credentials=False, send_wildcard=True, automatic_options=True)
+
+    @app.after_request
+    def add_cors_headers(response):
+        try:
+            if request.path.startswith('/api/'):
+                origin = request.headers.get('Origin', '*')
+                if allowed_origins == '*':
+                    response.headers['Access-Control-Allow-Origin'] = '*'
+                else:
+                    if origin in allowed_origins:
+                        response.headers['Access-Control-Allow-Origin'] = origin
+                response.headers['Vary'] = 'Origin'
+                response.headers['Access-Control-Allow-Credentials'] = 'false'
+                response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-Requested-With'
+                response.headers['Access-Control-Allow-Methods'] = 'GET,POST,PUT,DELETE,OPTIONS'
+        except Exception:
+            pass
+        return response
     
     # Configuration
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
