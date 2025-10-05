@@ -3,6 +3,22 @@ from datetime import datetime
 
 from config.database import db
 from middleware.validation import add_security_headers
+def _resolve_db_user_id(raw_user_id: str):
+    """Return internal UUID user id. Accepts UUID or Firebase UID string."""
+    if not raw_user_id:
+        return None
+    try:
+        import re
+        uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        if re.match(uuid_pattern, raw_user_id, re.IGNORECASE):
+            return raw_user_id
+        # Otherwise treat as firebase_uid and look up users.id
+        row = db.execute_query("SELECT id FROM users WHERE firebase_uid = %s", (raw_user_id,))
+        if row and len(row) > 0 and row[0].get('id'):
+            return row[0]['id']
+    except Exception:
+        pass
+    return None
 
 meetings_bp = Blueprint('meetings', __name__)
 
@@ -58,9 +74,12 @@ def list_routes():
 def get_meetings():
     """Get all meetings for a user"""
     try:
-        user_id = request.args.get('user_id')
-        if not user_id:
+        raw_user_id = request.args.get('user_id')
+        if not raw_user_id:
             return jsonify({'error': 'User ID is required'}), 400
+        user_id = _resolve_db_user_id(raw_user_id)
+        if not user_id:
+            return jsonify({'error': f'Unknown or invalid user_id: {raw_user_id}'}), 400
         
         # Get meetings with pagination
         page = int(request.args.get('page', 1))

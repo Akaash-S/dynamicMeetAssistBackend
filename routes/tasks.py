@@ -4,6 +4,20 @@ import logging
 import traceback
 
 from config.database import db
+def _resolve_db_user_id(raw_user_id: str):
+    if not raw_user_id:
+        return None
+    try:
+        import re
+        uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        if re.match(uuid_pattern, raw_user_id, re.IGNORECASE):
+            return raw_user_id
+        row = db.execute_query("SELECT id FROM users WHERE firebase_uid = %s", (raw_user_id,))
+        if row and len(row) > 0 and row[0].get('id'):
+            return row[0]['id']
+    except Exception:
+        pass
+    return None
 from services.calendar_sync import calendar_service
 
 # Set up logging
@@ -16,12 +30,15 @@ tasks_bp = Blueprint('tasks', __name__)
 def get_tasks():
     """Get all tasks for a user"""
     try:
-        user_id = request.args.get('user_id')
+        raw_user_id = request.args.get('user_id')
+        user_id = _resolve_db_user_id(raw_user_id)
         logger.info(f"📋 Fetching tasks for user_id: {user_id}")
         
-        if not user_id:
+        if not raw_user_id:
             logger.warning("❌ No user_id provided in request")
             return jsonify({'error': 'User ID is required'}), 400
+        if not user_id:
+            return jsonify({'error': f'Unknown or invalid user_id: {raw_user_id}'}), 400
         
         # Get filter parameters
         status = request.args.get('status')  # pending, in_progress, completed
