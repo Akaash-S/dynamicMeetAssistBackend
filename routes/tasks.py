@@ -389,69 +389,77 @@ def get_upcoming_tasks():
 def get_task_stats():
     """Get task statistics for a user"""
     try:
-        user_id = request.args.get('user_id')
-        if not user_id:
+        raw_user_id = request.args.get('user_id')
+        if not raw_user_id:
             return jsonify({'error': 'User ID is required'}), 400
-        
+        import re
+        is_uuid = re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', raw_user_id or '', re.IGNORECASE) is not None
+        if is_uuid:
+            where_sql = "t.user_id = %s"
+            where_param = raw_user_id
+        else:
+            where_sql = "t.user_id = (SELECT id FROM users WHERE firebase_uid = %s)"
+            where_param = raw_user_id
+
         stats = {}
         
         # Total tasks
         total_query = f"""
-        SELECT COUNT(*) as count
+        SELECT COALESCE(COUNT(*), 0) as count
         FROM tasks t
         WHERE {where_sql}
         """
         total_result = db.execute_query(total_query, (where_param,))
-        stats['total_tasks'] = total_result[0]['count'] if total_result else 0
+        stats['total_tasks'] = int(total_result[0]['count']) if total_result else 0
         
         # Tasks by status
         status_query = f"""
-        SELECT status, COUNT(*) as count
+        SELECT t.status, COALESCE(COUNT(*), 0) as count
         FROM tasks t
         WHERE {where_sql}
-        GROUP BY status
+        GROUP BY t.status
         """
         status_result = db.execute_query(status_query, (where_param,))
-        stats['by_status'] = {row['status']: row['count'] for row in status_result}
+        stats['by_status'] = {row['status']: int(row['count']) for row in (status_result or [])}
         
         # Tasks by priority
         priority_query = f"""
-        SELECT priority, COUNT(*) as count
+        SELECT t.priority, COALESCE(COUNT(*), 0) as count
         FROM tasks t
         WHERE {where_sql}
-        GROUP BY priority
+        GROUP BY t.priority
         """
         priority_result = db.execute_query(priority_query, (where_param,))
-        stats['by_priority'] = {row['priority']: row['count'] for row in priority_result}
+        stats['by_priority'] = {row['priority']: int(row['count']) for row in (priority_result or [])}
         
         # Overdue tasks
         overdue_query = f"""
-        SELECT COUNT(*) as count
+        SELECT COALESCE(COUNT(*), 0) as count
         FROM tasks t
         WHERE {where_sql}
+        AND t.deadline IS NOT NULL
         AND t.deadline < NOW() 
         AND t.status != 'completed'
         """
         overdue_result = db.execute_query(overdue_query, (where_param,))
-        stats['overdue_tasks'] = overdue_result[0]['count'] if overdue_result else 0
+        stats['overdue_tasks'] = int(overdue_result[0]['count']) if overdue_result else 0
         
         # Due this week
         week_query = f"""
-        SELECT COUNT(*) as count
+        SELECT COALESCE(COUNT(*), 0) as count
         FROM tasks t
         WHERE {where_sql}
+        AND t.deadline IS NOT NULL
         AND t.deadline BETWEEN NOW() AND NOW() + INTERVAL '7 days'
         AND t.status != 'completed'
         """
         week_result = db.execute_query(week_query, (where_param,))
-        stats['due_this_week'] = week_result[0]['count'] if week_result else 0
+        stats['due_this_week'] = int(week_result[0]['count']) if week_result else 0
         
         # Completion rate
-        if stats['total_tasks'] > 0:
-            completed_count = stats['by_status'].get('completed', 0)
-            stats['completion_rate'] = round((completed_count / stats['total_tasks']) * 100, 2)
-        else:
-            stats['completion_rate'] = 0
+        total = stats['total_tasks']
+        completed = stats['by_status'].get('completed', 0)
+        stats['completion_rate'] = round((completed / total) * 100, 2) if total > 0 else 0
         
         return jsonify(stats), 200
         

@@ -197,6 +197,10 @@ db = Database()
 
 def init_db():
     """Initialize database tables"""
+    # Ensure required extensions (for gen_random_uuid)
+    create_extensions = """
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+    """
     
     # Users table
     create_users_table = """
@@ -292,6 +296,7 @@ def init_db():
     """
     
     try:
+        db.execute_query(create_extensions)
         db.execute_query(create_users_table)
         db.execute_query(create_meetings_table)
         db.execute_query(create_timeline_table)

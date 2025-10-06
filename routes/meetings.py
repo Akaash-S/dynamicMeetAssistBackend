@@ -72,20 +72,22 @@ def list_routes():
 
 @meetings_bp.route('', methods=['GET'])
 def get_meetings():
-    """Get all meetings for a user"""
+    """Get paginated meetings for a user (by user_id UUID or firebase_uid)."""
     try:
         raw_user_id = request.args.get('user_id')
         if not raw_user_id:
             return jsonify({'error': 'User ID is required'}), 400
+        # Pagination
+        try:
+            page = max(1, int(request.args.get('page', 1)))
+            limit = max(1, min(100, int(request.args.get('limit', 10))))
+        except Exception:
+            page, limit = 1, 10
+        offset = (page - 1) * limit
+
         # Decide filter strategy: UUID compare or firebase_uid subselect to avoid uuid cast errors
         import re
         is_uuid = re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', raw_user_id or '', re.IGNORECASE) is not None
-        
-        # Get meetings with pagination
-        page = int(request.args.get('page', 1))
-        limit = int(request.args.get('limit', 10))
-        offset = (page - 1) * limit
-        
         if is_uuid:
             where_sql = "m.user_id = %s"
             where_param = raw_user_id
@@ -93,21 +95,36 @@ def get_meetings():
             where_sql = "m.user_id = (SELECT id FROM users WHERE firebase_uid = %s)"
             where_param = raw_user_id
 
-        query = f"""
-        SELECT m.*, 
-               COUNT(t.id) as task_count,
-               COUNT(tl.id) as timeline_count
+        # Pre-aggregated counts via left joins; avoids GROUP BY on m.*
+        list_query = f"""
+        SELECT
+            m.id,
+            m.title,
+            m.status,
+            m.duration,
+            m.file_size,
+            m.created_at,
+            m.updated_at,
+            COALESCE(tc.cnt, 0)  AS task_count,
+            COALESCE(lc.cnt, 0)  AS timeline_count
         FROM meetings m
-        LEFT JOIN tasks t ON m.id = t.meeting_id
-        LEFT JOIN timeline tl ON m.id = tl.meeting_id
+        LEFT JOIN (
+            SELECT meeting_id, COUNT(*) AS cnt
+            FROM tasks
+            GROUP BY meeting_id
+        ) tc ON tc.meeting_id = m.id
+        LEFT JOIN (
+            SELECT meeting_id, COUNT(*) AS cnt
+            FROM timeline
+            GROUP BY meeting_id
+        ) lc ON lc.meeting_id = m.id
         WHERE {where_sql}
-        GROUP BY m.id
         ORDER BY m.created_at DESC
         LIMIT %s OFFSET %s
         """
-        
-        meetings = db.execute_query(query, (where_param, limit, offset))
-        print(f"📊 Found {len(meetings) if meetings else 0} meetings for user {user_id}")
+
+        meetings = db.execute_query(list_query, (where_param, limit, offset))
+        print(f"📊 Found {len(meetings) if meetings else 0} meetings for user {raw_user_id}")
         
         # Debug: Print meeting IDs to check format
         if meetings:
@@ -125,17 +142,17 @@ def get_meetings():
         
         # Format response
         formatted_meetings = []
-        for meeting in meetings:
+        for meeting in meetings or []:
             formatted_meetings.append({
-                'id': meeting['id'],
+                'id': str(meeting['id']),
                 'title': meeting['title'],
                 'status': meeting['status'],
                 'duration': meeting['duration'],
                 'file_size': meeting['file_size'],
-                'task_count': meeting['task_count'],
-                'timeline_count': meeting['timeline_count'],
-                'created_at': meeting['created_at'].isoformat() if meeting['created_at'] else None,
-                'updated_at': meeting['updated_at'].isoformat() if meeting['updated_at'] else None
+                'task_count': int(meeting['task_count']) if meeting['task_count'] is not None else 0,
+                'timeline_count': int(meeting['timeline_count']) if meeting['timeline_count'] is not None else 0,
+                'created_at': meeting['created_at'].isoformat() if meeting.get('created_at') else None,
+                'updated_at': meeting['updated_at'].isoformat() if meeting.get('updated_at') else None
             })
         
         return jsonify({
@@ -406,24 +423,24 @@ def get_meeting_stats():
         stats['by_status'] = {row['status']: row['count'] for row in status_result}
         
         # Total tasks
-        tasks_query = """
+        tasks_query = f"""
         SELECT COUNT(*) as count
         FROM tasks t
         JOIN meetings m ON t.meeting_id = m.id 
-        WHERE m.user_id = %s
+        WHERE {where_sql}
         """
-        tasks_result = db.execute_query(tasks_query, (user_id,))
+        tasks_result = db.execute_query(tasks_query, (where_param,))
         stats['total_tasks'] = tasks_result[0]['count'] if tasks_result else 0
         
         # Tasks by status
-        task_status_query = """
+        task_status_query = f"""
         SELECT t.status, COUNT(*) as count
         FROM tasks t
         JOIN meetings m ON t.meeting_id = m.id 
-        WHERE m.user_id = %s 
+        WHERE {where_sql}
         GROUP BY t.status
         """
-        task_status_result = db.execute_query(task_status_query, (user_id,))
+        task_status_result = db.execute_query(task_status_query, (where_param,))
         stats['tasks_by_status'] = {row['status']: row['count'] for row in task_status_result}
         
         # Recent activity (last 7 days)
