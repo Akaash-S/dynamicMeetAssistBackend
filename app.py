@@ -13,6 +13,11 @@ from routes.meetings import meetings_bp
 from routes.tasks import tasks_bp
 from routes.upload import upload_bp
 from routes.health import health_bp
+from routes.google_calendar import google_calendar_bp
+
+# Import CORS debug routes (development only)
+if os.getenv('FLASK_ENV') == 'development':
+    from routes.cors_debug import cors_debug_bp
 
 # Import database initialization
 from config.database import init_db
@@ -23,27 +28,112 @@ from middleware.rate_limiting import limiter
 def create_app():
     app = Flask(__name__)
     
-    # Configure CORS for API routes; permissive fallback to fix preflight immediately
-    cors_origins = os.getenv('CORS_ORIGINS', '*')
-    allowed_origins = [origin.strip() for origin in cors_origins.split(',')] if (cors_origins and cors_origins != '*') else '*'
-    CORS(app, resources={r"/api/*": {"origins": allowed_origins}}, supports_credentials=False, send_wildcard=True, automatic_options=True)
+    # Environment-based CORS configuration
+    flask_env = os.getenv('FLASK_ENV', 'production')
+    cors_origins = os.getenv('CORS_ORIGINS', '')
+    
+    # Parse CORS origins from environment variable
+    if cors_origins:
+        allowed_origins = [origin.strip() for origin in cors_origins.split(',') if origin.strip()]
+    else:
+        allowed_origins = []
+    
+    # Add development origins only in development mode
+    if flask_env == 'development':
+        development_origins = [
+            'http://localhost:3000',
+            'http://localhost:5173', 
+            'http://localhost:8080',
+            'http://127.0.0.1:3000',
+            'http://127.0.0.1:5173',
+            'http://127.0.0.1:8080'
+        ]
+        allowed_origins.extend(development_origins)
+        allowed_origins = list(set(allowed_origins))  # Remove duplicates
+    
+    # Security: In production, never allow all origins
+    if flask_env == 'production' and not allowed_origins:
+        raise ValueError("CORS_ORIGINS must be set in production environment")
+    
+    # Configure CORS with environment-specific settings
+    cors_config = {
+        "resources": {
+            r"/api/*": {
+                "origins": allowed_origins,
+                "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+                "allow_headers": [
+                    "Content-Type", 
+                    "Authorization", 
+                    "X-Requested-With", 
+                    "Accept", 
+                    "Origin",
+                    "X-API-Key",
+                    "X-CSRFToken"
+                ],
+                "supports_credentials": False,
+                "max_age": 86400  # 24 hours
+            }
+        },
+        "supports_credentials": False,
+        "automatic_options": True
+    }
+    
+    # Only add send_wildcard in development
+    if flask_env == 'development':
+        cors_config["send_wildcard"] = True
+    
+    CORS(app, **cors_config)
 
     @app.after_request
     def add_cors_headers(response):
         try:
+            # Apply CORS headers to all API routes
             if request.path.startswith('/api/'):
-                origin = request.headers.get('Origin', '*')
-                if allowed_origins == '*':
-                    response.headers['Access-Control-Allow-Origin'] = '*'
+                origin = request.headers.get('Origin')
+                
+                # Security: Only allow specific origins
+                if origin and origin in allowed_origins:
+                    response.headers['Access-Control-Allow-Origin'] = origin
+                elif flask_env == 'development' and origin and (
+                    origin.startswith('http://localhost:') or 
+                    origin.startswith('http://127.0.0.1:') or
+                    origin.startswith('https://localhost:') or
+                    origin.startswith('https://127.0.0.1:')
+                ):
+                    # Allow localhost in development only
+                    response.headers['Access-Control-Allow-Origin'] = origin
+                elif flask_env == 'development' and not allowed_origins:
+                    # Fallback for development when no CORS_ORIGINS set
+                    response.headers['Access-Control-Allow-Origin'] = origin or '*'
                 else:
-                    if origin in allowed_origins:
-                        response.headers['Access-Control-Allow-Origin'] = origin
-                response.headers['Vary'] = 'Origin'
+                    # In production, reject unknown origins
+                    if flask_env == 'production':
+                        response.headers['Access-Control-Allow-Origin'] = allowed_origins[0] if allowed_origins else 'null'
+                    else:
+                        response.headers['Access-Control-Allow-Origin'] = origin or '*'
+                
+                # Set comprehensive CORS headers
+                response.headers['Access-Control-Allow-Methods'] = 'GET,POST,PUT,DELETE,OPTIONS,PATCH'
+                response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-Requested-With,Accept,Origin,X-API-Key,X-CSRFToken'
                 response.headers['Access-Control-Allow-Credentials'] = 'false'
-                response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-Requested-With'
+                response.headers['Access-Control-Max-Age'] = '86400'  # 24 hours
+                response.headers['Vary'] = 'Origin'
+                
+                # Handle preflight requests
+                if request.method == 'OPTIONS':
+                    response.status_code = 200
+                    
+        except Exception as e:
+            print(f"CORS header error: {e}")
+            # Secure fallback - only allow in development
+            if flask_env == 'development':
+                response.headers['Access-Control-Allow-Origin'] = '*'
                 response.headers['Access-Control-Allow-Methods'] = 'GET,POST,PUT,DELETE,OPTIONS'
-        except Exception:
-            pass
+                response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-Requested-With'
+            else:
+                # In production, don't set CORS headers on error
+                pass
+            
         return response
     
     # Configuration
@@ -55,6 +145,40 @@ def create_app():
     
     # Initialize rate limiter
     limiter.init_app(app)
+    
+    # Global OPTIONS handler for CORS preflight requests
+    @app.before_request
+    def handle_preflight():
+        if request.method == "OPTIONS":
+            response = jsonify()
+            origin = request.headers.get('Origin')
+            
+            # Security: Only allow specific origins
+            if origin and origin in allowed_origins:
+                response.headers.add("Access-Control-Allow-Origin", origin)
+            elif flask_env == 'development' and origin and (
+                origin.startswith('http://localhost:') or 
+                origin.startswith('http://127.0.0.1:') or
+                origin.startswith('https://localhost:') or
+                origin.startswith('https://127.0.0.1:')
+            ):
+                # Allow localhost in development only
+                response.headers.add("Access-Control-Allow-Origin", origin)
+            elif flask_env == 'development' and not allowed_origins:
+                # Fallback for development when no CORS_ORIGINS set
+                response.headers.add("Access-Control-Allow-Origin", origin or "*")
+            else:
+                # In production, reject unknown origins
+                if flask_env == 'production':
+                    response.headers.add("Access-Control-Allow-Origin", allowed_origins[0] if allowed_origins else "null")
+                else:
+                    response.headers.add("Access-Control-Allow-Origin", origin or "*")
+                
+            response.headers.add('Access-Control-Allow-Headers', "Content-Type,Authorization,X-Requested-With,Accept,Origin,X-API-Key,X-CSRFToken")
+            response.headers.add('Access-Control-Allow-Methods', "GET,POST,PUT,DELETE,OPTIONS,PATCH")
+            response.headers.add('Access-Control-Allow-Credentials', "false")
+            response.headers.add('Access-Control-Max-Age', "86400")
+            return response
     
     # Simple health endpoint (as requested)
     @app.route('/api/health', methods=['GET', 'OPTIONS'])
@@ -91,6 +215,11 @@ def create_app():
     app.register_blueprint(tasks_bp, url_prefix='/api/tasks')
     app.register_blueprint(upload_bp, url_prefix='/api/upload')
     app.register_blueprint(health_bp, url_prefix='/api/health/detailed')
+    app.register_blueprint(google_calendar_bp, url_prefix='/api/google-calendar')
+    
+    # Register CORS debug routes (development only)
+    if flask_env == 'development':
+        app.register_blueprint(cors_debug_bp, url_prefix='/api/cors')
     
     # Global error handlers
     @app.errorhandler(400)

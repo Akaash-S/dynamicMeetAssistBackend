@@ -9,13 +9,12 @@ auth_bp = Blueprint('auth', __name__)
 
 @auth_bp.route('/verify', methods=['POST'])
 @add_security_headers()
-@validate_json('firebase_uid', 'email')
+@validate_json('email')
 def verify_user():
-    """Verify Firebase user and create/update user record"""
+    """Verify user and create/update user record - supports both Firebase and OAuth2"""
     try:
         data = request.get_json()
         
-        firebase_uid = RequestValidator.sanitize_string(data['firebase_uid'], 255)
         email = RequestValidator.sanitize_string(data['email'], 255)
         name = RequestValidator.sanitize_string(data.get('name', ''), 255) or email.split('@')[0]
         
@@ -23,27 +22,68 @@ def verify_user():
         if not RequestValidator.validate_email(email):
             return jsonify({'error': 'Invalid email format'}), 400
         
-        # Check if user already exists
-        check_query = "SELECT * FROM users WHERE firebase_uid = %s"
-        existing_user = db.execute_query(check_query, (firebase_uid,))
+        # Determine authentication method
+        firebase_uid = data.get('firebase_uid')
+        google_oauth_id = data.get('google_oauth_id')
+        auth_provider = 'firebase' if firebase_uid else 'google_oauth'
+        
+        # Validate that at least one auth method is provided
+        if not firebase_uid and not google_oauth_id:
+            return jsonify({'error': 'Either firebase_uid or google_oauth_id is required'}), 400
+        
+        # Check if user already exists by email or auth identifiers
+        check_query = """
+        SELECT * FROM users 
+        WHERE email = %s OR firebase_uid = %s OR google_oauth_id = %s
+        """
+        existing_user = db.execute_query(check_query, (email, firebase_uid or '', google_oauth_id or ''))
         
         if existing_user:
             # Update existing user
             user = existing_user[0]
             update_query = """
             UPDATE users 
-            SET email = %s, name = %s, updated_at = %s 
-            WHERE firebase_uid = %s
+            SET email = %s, name = %s, auth_provider = %s, updated_at = %s
             """
-            db.execute_query(update_query, (email, name or user['name'], datetime.utcnow(), firebase_uid))
+            params = [email, name or user['name'], auth_provider, datetime.utcnow()]
+            
+            # Update auth-specific fields
+            if firebase_uid and auth_provider == 'firebase':
+                update_query += ", firebase_uid = %s"
+                params.append(firebase_uid)
+            elif google_oauth_id and auth_provider == 'google_oauth':
+                update_query += ", google_oauth_id = %s"
+                params.append(google_oauth_id)
+                
+            # Add Google OAuth tokens if provided
+            if data.get('google_access_token'):
+                update_query += ", google_access_token = %s"
+                params.append(data['google_access_token'])
+            if data.get('google_refresh_token'):
+                update_query += ", google_refresh_token = %s"
+                params.append(data['google_refresh_token'])
+            if data.get('google_token_expires_at'):
+                update_query += ", google_token_expires_at = %s"
+                params.append(data['google_token_expires_at'])
+            if data.get('google_calendar_enabled') is not None:
+                update_query += ", google_calendar_enabled = %s"
+                params.append(data['google_calendar_enabled'])
+            
+            update_query += " WHERE id = %s"
+            params.append(user['id'])
+            
+            db.execute_query(update_query, params)
             
             return jsonify({
                 'success': True,
                 'user': {
                     'id': user['id'],
-                    'firebase_uid': firebase_uid,
+                    'firebase_uid': firebase_uid or user.get('firebase_uid'),
+                    'google_oauth_id': google_oauth_id or user.get('google_oauth_id'),
                     'email': email,
                     'name': name or user['name'],
+                    'auth_provider': auth_provider,
+                    'google_calendar_enabled': user.get('google_calendar_enabled', False),
                     'created_at': user['created_at'].isoformat() if user['created_at'] else None
                 },
                 'is_new_user': False
@@ -52,15 +92,23 @@ def verify_user():
             # Create new user
             user_id = str(uuid.uuid4())
             insert_query = """
-            INSERT INTO users (id, firebase_uid, email, name, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO users (id, firebase_uid, google_oauth_id, email, name, auth_provider, 
+                             google_access_token, google_refresh_token, google_token_expires_at, 
+                             google_calendar_enabled, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             
             db.execute_query(insert_query, (
                 user_id,
                 firebase_uid,
+                google_oauth_id,
                 email,
-                name or email.split('@')[0],  # Use email prefix as default name
+                name or email.split('@')[0],
+                auth_provider,
+                data.get('google_access_token'),
+                data.get('google_refresh_token'),
+                data.get('google_token_expires_at'),
+                data.get('google_calendar_enabled', False),
                 datetime.utcnow(),
                 datetime.utcnow()
             ))
@@ -70,8 +118,11 @@ def verify_user():
                 'user': {
                     'id': user_id,
                     'firebase_uid': firebase_uid,
+                    'google_oauth_id': google_oauth_id,
                     'email': email,
                     'name': name or email.split('@')[0],
+                    'auth_provider': auth_provider,
+                    'google_calendar_enabled': data.get('google_calendar_enabled', False),
                     'created_at': datetime.utcnow().isoformat()
                 },
                 'is_new_user': True
@@ -129,11 +180,14 @@ def get_user(firebase_uid):
             'source': 'postgresql_database',
             'user': {
                 'id': str(user['id']),
-                'firebase_uid': user['firebase_uid'],
+                'firebase_uid': user.get('firebase_uid'),
+                'google_oauth_id': user.get('google_oauth_id'),
                 'email': user['email'],
                 'name': user['name'],  # This is the latest value from DB
+                'auth_provider': user.get('auth_provider', 'firebase'),
                 'email_notifications': bool(user['email_notifications']),
                 'in_app_notifications': bool(user['in_app_notifications']),
+                'google_calendar_enabled': bool(user.get('google_calendar_enabled', False)),
                 'created_at': user['created_at'].isoformat() if user['created_at'] else None,
                 'updated_at': user['updated_at'].isoformat() if user['updated_at'] else None
             }
@@ -495,3 +549,130 @@ def delete_user_account(firebase_uid):
         
     except Exception as e:
         return jsonify({'error': f'Failed to delete account: {str(e)}'}), 500
+
+@auth_bp.route('/user/<firebase_uid>/google-auth', methods=['PUT'])
+def link_google_account(firebase_uid):
+    """Link Google account and store OAuth tokens"""
+    try:
+        data = request.get_json()
+        if not data or 'access_token' not in data:
+            return jsonify({'error': 'Access token is required'}), 400
+
+        access_token = data['access_token']
+        refresh_token = data.get('refresh_token')  # Optional
+
+        # Check if user exists
+        check_query = "SELECT id FROM users WHERE firebase_uid = %s"
+        check_result = db.execute_query(check_query, (firebase_uid,))
+
+        if not check_result:
+            return jsonify({'error': 'User not found'}), 404
+
+        # Update user with Google tokens
+        update_query = """
+        UPDATE users
+        SET google_access_token = %s, google_refresh_token = %s, updated_at = %s
+        WHERE firebase_uid = %s
+        """
+
+        db.execute_query(update_query, (access_token, refresh_token, datetime.utcnow(), firebase_uid))
+
+        return jsonify({
+            'success': True,
+            'message': 'Google account linked successfully'
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': f'Failed to link Google account: {str(e)}'}), 500
+
+@auth_bp.route('/google-oauth', methods=['POST'])
+@add_security_headers()
+@validate_json('access_token', 'email')
+def verify_google_oauth():
+    """Verify Google OAuth user and create/update user record"""
+    try:
+        data = request.get_json()
+        
+        access_token = data['access_token']
+        email = RequestValidator.sanitize_string(data['email'], 255)
+        name = RequestValidator.sanitize_string(data.get('name', ''), 255) or email.split('@')[0]
+        google_oauth_id = data.get('google_oauth_id', data.get('id'))
+        
+        # Validate email format
+        if not RequestValidator.validate_email(email):
+            return jsonify({'error': 'Invalid email format'}), 400
+        
+        # Check if user already exists
+        check_query = """
+        SELECT * FROM users 
+        WHERE email = %s OR google_oauth_id = %s
+        """
+        existing_user = db.execute_query(check_query, (email, google_oauth_id or ''))
+        
+        if existing_user:
+            # Update existing user with Google OAuth info
+            user = existing_user[0]
+            update_query = """
+            UPDATE users 
+            SET email = %s, name = %s, auth_provider = 'google_oauth', 
+                google_oauth_id = %s, google_access_token = %s, 
+                google_refresh_token = %s, google_token_expires_at = %s,
+                google_calendar_enabled = %s, updated_at = %s
+            WHERE id = %s
+            """
+            
+            db.execute_query(update_query, (
+                email, name or user['name'], google_oauth_id, access_token,
+                data.get('refresh_token'), data.get('expires_at'),
+                data.get('google_calendar_enabled', True),
+                datetime.utcnow(), user['id']
+            ))
+            
+            return jsonify({
+                'success': True,
+                'user': {
+                    'id': user['id'],
+                    'firebase_uid': user.get('firebase_uid'),
+                    'google_oauth_id': google_oauth_id,
+                    'email': email,
+                    'name': name or user['name'],
+                    'auth_provider': 'google_oauth',
+                    'google_calendar_enabled': data.get('google_calendar_enabled', True),
+                    'created_at': user['created_at'].isoformat() if user['created_at'] else None
+                },
+                'is_new_user': False
+            }), 200
+        else:
+            # Create new user with Google OAuth
+            user_id = str(uuid.uuid4())
+            insert_query = """
+            INSERT INTO users (id, google_oauth_id, email, name, auth_provider, 
+                             google_access_token, google_refresh_token, google_token_expires_at, 
+                             google_calendar_enabled, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            
+            db.execute_query(insert_query, (
+                user_id, google_oauth_id, email, name or email.split('@')[0], 'google_oauth',
+                access_token, data.get('refresh_token'), data.get('expires_at'),
+                data.get('google_calendar_enabled', True),
+                datetime.utcnow(), datetime.utcnow()
+            ))
+            
+            return jsonify({
+                'success': True,
+                'user': {
+                    'id': user_id,
+                    'firebase_uid': None,
+                    'google_oauth_id': google_oauth_id,
+                    'email': email,
+                    'name': name or email.split('@')[0],
+                    'auth_provider': 'google_oauth',
+                    'google_calendar_enabled': data.get('google_calendar_enabled', True),
+                    'created_at': datetime.utcnow().isoformat()
+                },
+                'is_new_user': True
+            }), 201
+        
+    except Exception as e:
+        return jsonify({'error': f'Google OAuth verification failed: {str(e)}'}), 500

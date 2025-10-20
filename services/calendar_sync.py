@@ -183,15 +183,130 @@ class CalendarSyncService:
     
     def integrate_google_calendar(self, credentials: Dict) -> Dict:
         """
-        Future implementation for Google Calendar integration
+        Integrate with Google Calendar API using OAuth2 credentials
         """
-        # This would integrate with Google Calendar API
-        # For now, return a placeholder response
-        return {
-            'success': False,
-            'error': 'Google Calendar integration not implemented yet',
-            'message': 'Using in-memory calendar for demo purposes'
-        }
+        try:
+            # Validate credentials
+            access_token = credentials.get('access_token')
+            if not access_token:
+                return {
+                    'success': False,
+                    'error': 'No access token provided'
+                }
+
+            # Test the connection by making a simple API call
+            headers = {
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/json'
+            }
+
+            # Get user's calendar list to verify connection
+            response = requests.get(
+                'https://www.googleapis.com/calendar/v3/users/me/calendarList',
+                headers=headers,
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                return {
+                    'success': True,
+                    'message': 'Google Calendar integration successful',
+                    'calendars': len(response.json().get('items', []))
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': f'Google Calendar API error: {response.status_code}'
+                }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Google Calendar integration failed: {str(e)}'
+            }
+
+    def create_google_calendar_event(self, task: Dict, meeting_title: str, access_token: str) -> Dict:
+        """
+        Create a Google Calendar event for a task
+        """
+        try:
+            # Validate access token
+            if not access_token:
+                return {
+                    'success': False,
+                    'error': 'No Google Calendar access token provided'
+                }
+
+            # Parse deadline
+            deadline_str = task.get('deadline')
+            if deadline_str:
+                try:
+                    deadline = datetime.strptime(deadline_str, '%Y-%m-%d')
+                except ValueError:
+                    try:
+                        deadline = datetime.strptime(deadline_str, '%Y-%m-%d %H:%M:%S')
+                    except ValueError:
+                        deadline = datetime.now() + timedelta(days=7)
+            else:
+                deadline = datetime.now() + timedelta(days=7)
+
+            # Create event 30 minutes before deadline
+            event_start = deadline.replace(hour=9, minute=0) - timedelta(minutes=30)
+            event_end = deadline.replace(hour=9, minute=0)
+
+            # Create event data for Google Calendar API
+            event_data = {
+                'summary': f"📋 Task Deadline: {task.get('title', 'Untitled Task')}",
+                'description': self._format_task_description(task, meeting_title),
+                'start': {
+                    'dateTime': event_start.isoformat() + 'Z',
+                    'timeZone': 'UTC'
+                },
+                'end': {
+                    'dateTime': event_end.isoformat() + 'Z',
+                    'timeZone': 'UTC'
+                },
+                'reminders': {
+                    'useDefault': False,
+                    'overrides': [
+                        {'method': 'email', 'minutes': 60},  # 1 hour before
+                        {'method': 'popup', 'minutes': 15}   # 15 minutes before
+                    ]
+                }
+            }
+
+            # Make API call to create event
+            headers = {
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/json'
+            }
+
+            response = requests.post(
+                'https://www.googleapis.com/calendar/v3/calendars/primary/events',
+                headers=headers,
+                json=event_data,
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                event_result = response.json()
+                return {
+                    'success': True,
+                    'event_id': event_result.get('id'),
+                    'event_link': event_result.get('htmlLink'),
+                    'message': f'Task "{task.get("title")}" synced to Google Calendar'
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': f'Failed to create Google Calendar event: {response.status_code}'
+                }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Error creating Google Calendar event: {str(e)}'
+            }
     
     def integrate_outlook_calendar(self, credentials: Dict) -> Dict:
         """

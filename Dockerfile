@@ -1,12 +1,18 @@
-FROM python:3.11-slim AS base
+# Use Python 3.11 slim image for production
+FROM python:3.11-slim
 
-# Prevents Python from writing pyc files and enables unbuffered output
+# Set environment variables for production
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    FLASK_ENV=production \
+    WEB_CONCURRENCY=2 \
+    GUNICORN_TIMEOUT=120 \
+    PORT=8000
 
+# Set working directory
 WORKDIR /app
 
-# System deps (build, postgres, and libsndfile/ffmpeg-like tools if needed later)
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
@@ -15,38 +21,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     libpq-dev \
     pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Install Python dependencies separately for better caching
-# Copy requirements from the same directory as this Dockerfile (backend/)
-COPY requirements.txt /app/requirements.txt
-RUN python -m pip install --upgrade pip && \
-    pip install --no-cache-dir -r /app/requirements.txt
+# Copy requirements first for better Docker layer caching
+COPY requirements.txt .
 
-# Copy backend source (everything in backend/)
-COPY . /app
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Expose default Gunicorn port (Render sets PORT env; we will bind to it)
+# Copy application code
+COPY . .
+
+# Make entrypoint executable
+RUN chmod +x entrypoint.sh
+
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash app && \
+    chown -R app:app /app
+USER app
+
+# Expose port
 EXPOSE 8000
 
-# Healthcheck (expects /api/health)
-HEALTHCHECK --interval=30s --timeout=10s --retries=5 CMD \
-  curl -fsS http://localhost:8000/api/health || exit 1
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/api/health || exit 1
 
-# Gunicorn config (threads to avoid blocking, adjust workers per CPU)
-ENV WEB_CONCURRENCY=2 \
-    GUNICORN_TIMEOUT=120 \
-    PORT=8000 \
-    PYTHONPATH=/app
-
-# Copy entrypoint
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
-
-# Start via entrypoint; binds to PORT and validates import before boot
-# Pass through CORS origins (can be overridden at deploy)
-ENV CORS_ORIGINS="*"
-WORKDIR /app
-CMD ["/app/entrypoint.sh"]
+# Start application
+CMD ["./entrypoint.sh"]
 
 

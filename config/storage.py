@@ -6,16 +6,55 @@ class StorageService:
     def __init__(self):
         self.url = os.getenv('SUPABASE_URL')
         self.key = os.getenv('SUPABASE_KEY')
+        self.client: Client = None
+        self.bucket_name = 'meeting-audio'
         
         if not self.url or not self.key:
-            raise ValueError("SUPABASE_URL and SUPABASE_KEY environment variables are required")
+            print("⚠️ SUPABASE_URL and SUPABASE_KEY environment variables are required")
+            print(f"⚠️ SUPABASE_URL present: {bool(self.url)}")
+            print(f"⚠️ SUPABASE_KEY present: {bool(self.key)}")
+            return
         
-        self.client: Client = create_client(self.url, self.key)
-        self.bucket_name = 'meeting-audio'
+        try:
+            print(f"🔄 Initializing Supabase client with URL: {self.url}")
+            self.client = create_client(self.url, self.key)
+            print(f"✅ Supabase client initialized successfully")
+        except Exception as e:
+            print(f"❌ Failed to initialize Supabase client: {e}")
+            print(f"❌ Error type: {type(e).__name__}")
+            if "getaddrinfo failed" in str(e):
+                print("🌐 DNS resolution failed - check internet connection and Supabase URL")
+            self.client = None
+    
+    def test_connection(self) -> bool:
+        """Test if Supabase connection is working"""
+        if not self.client:
+            print("❌ Supabase client not initialized for connection test")
+            return False
+        
+        try:
+            # Try to list buckets to test connection
+            buckets = self.client.storage.list_buckets()
+            print(f"✅ Supabase connection test successful - found {len(buckets)} buckets")
+            return True
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ Supabase connection test failed: {e}")
+            if "getaddrinfo failed" in error_msg:
+                print("🌐 DNS resolution issue - server may be unreachable")
+            elif "ConnectionError" in error_msg or "timeout" in error_msg.lower():
+                print("🌐 Network connectivity issue")
+            return False
     
     def upload_file(self, file_path: str, file_data: bytes, content_type: str = 'audio/mpeg') -> Optional[str]:
         """Upload file to Supabase storage"""
+        if not self.client:
+            print("❌ Supabase client not initialized - cannot upload file")
+            return None
+        
         try:
+            print(f"🔄 Attempting to upload to Supabase: {file_path}")
+            
             # Upload file to storage
             result = self.client.storage.from_(self.bucket_name).upload(
                 path=file_path,
@@ -26,16 +65,23 @@ class StorageService:
                 }
             )
             
+            print(f"📤 Upload result: {result}")
+            
             if result.status_code == 200:
                 # Get public URL
                 public_url = self.client.storage.from_(self.bucket_name).get_public_url(file_path)
+                print(f"✅ File uploaded successfully: {public_url}")
                 return public_url
             else:
-                print(f"Upload failed: {result}")
+                print(f"❌ Upload failed with status: {result.status_code}, response: {result}")
                 return None
                 
         except Exception as e:
-            print(f"Error uploading file: {e}")
+            print(f"❌ Error uploading file to Supabase: {e}")
+            print(f"❌ Error type: {type(e).__name__}")
+            # Check if it's a network connectivity issue
+            if "getaddrinfo failed" in str(e) or "ConnectionError" in str(type(e).__name__):
+                print("🌐 Network connectivity issue detected - Supabase server may be unreachable")
             return None
     
     def delete_file(self, file_path: str) -> bool:

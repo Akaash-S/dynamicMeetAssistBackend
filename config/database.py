@@ -202,17 +202,26 @@ def init_db():
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
     """
     
-    # Users table
+    # Users table - Updated for dual authentication support
     create_users_table = """
     CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        firebase_uid VARCHAR(255) UNIQUE NOT NULL,
+        firebase_uid VARCHAR(255) UNIQUE,
+        google_oauth_id VARCHAR(255) UNIQUE,
         email VARCHAR(255) NOT NULL,
         name VARCHAR(255) NOT NULL,
+        auth_provider VARCHAR(50) DEFAULT 'firebase', -- 'firebase' or 'google_oauth'
+        google_access_token TEXT,
+        google_refresh_token TEXT,
+        google_token_expires_at TIMESTAMP,
         email_notifications BOOLEAN DEFAULT TRUE,
         in_app_notifications BOOLEAN DEFAULT TRUE,
+        google_calendar_enabled BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT users_auth_check CHECK (
+            (firebase_uid IS NOT NULL) OR (google_oauth_id IS NOT NULL)
+        )
     );
     """
     
@@ -303,7 +312,88 @@ def init_db():
         db.execute_query(create_tasks_table)
         db.execute_query(create_processing_status_table)
         db.execute_query(create_notifications_table)
+        
+        # Run migration for existing users
+        migrate_existing_users()
+        
         print("[SUCCESS] Database tables initialized successfully")
     except Exception as e:
         print(f"[ERROR] Error initializing database: {e}")
         raise e
+
+def migrate_existing_users():
+    """Migrate existing users to support dual authentication"""
+    try:
+        # Check if new columns exist, if not add them
+        migration_queries = [
+            # Add new columns if they don't exist
+            """
+            DO $$ 
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                              WHERE table_name='users' AND column_name='google_oauth_id') THEN
+                    ALTER TABLE users ADD COLUMN google_oauth_id VARCHAR(255) UNIQUE;
+                END IF;
+            END $$;
+            """,
+            """
+            DO $$ 
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                              WHERE table_name='users' AND column_name='auth_provider') THEN
+                    ALTER TABLE users ADD COLUMN auth_provider VARCHAR(50) DEFAULT 'firebase';
+                END IF;
+            END $$;
+            """,
+            """
+            DO $$ 
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                              WHERE table_name='users' AND column_name='google_access_token') THEN
+                    ALTER TABLE users ADD COLUMN google_access_token TEXT;
+                END IF;
+            END $$;
+            """,
+            """
+            DO $$ 
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                              WHERE table_name='users' AND column_name='google_refresh_token') THEN
+                    ALTER TABLE users ADD COLUMN google_refresh_token TEXT;
+                END IF;
+            END $$;
+            """,
+            """
+            DO $$ 
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                              WHERE table_name='users' AND column_name='google_token_expires_at') THEN
+                    ALTER TABLE users ADD COLUMN google_token_expires_at TIMESTAMP;
+                END IF;
+            END $$;
+            """,
+            """
+            DO $$ 
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                              WHERE table_name='users' AND column_name='google_calendar_enabled') THEN
+                    ALTER TABLE users ADD COLUMN google_calendar_enabled BOOLEAN DEFAULT FALSE;
+                END IF;
+            END $$;
+            """,
+            # Update existing users to have firebase as auth_provider
+            """
+            UPDATE users 
+            SET auth_provider = 'firebase' 
+            WHERE auth_provider IS NULL AND firebase_uid IS NOT NULL;
+            """
+        ]
+        
+        for query in migration_queries:
+            db.execute_query(query)
+        
+        print("[SUCCESS] User table migration completed")
+        
+    except Exception as e:
+        print(f"[WARNING] User table migration failed: {e}")
+        # Don't fail the entire initialization if migration fails

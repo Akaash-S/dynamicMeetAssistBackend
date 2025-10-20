@@ -109,11 +109,11 @@ def get_tasks():
         }), 200
         
     except Exception as e:
-        logger.error(f"❌ Error fetching tasks for user {user_id}: {str(e)}")
+        logger.error(f"❌ Error fetching tasks for user {raw_user_id}: {str(e)}")
         logger.error(f"❌ Full traceback: {traceback.format_exc()}")
         return jsonify({
             'error': f'Failed to get tasks: {str(e)}',
-            'user_id': user_id,
+            'user_id': raw_user_id,
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
@@ -334,24 +334,34 @@ def delete_task(task_id):
 def get_upcoming_tasks():
     """Get upcoming tasks with deadlines"""
     try:
-        user_id = request.args.get('user_id')
-        if not user_id:
+        raw_user_id = request.args.get('user_id')
+        if not raw_user_id:
             return jsonify({'error': 'User ID is required'}), 400
         
         days_ahead = int(request.args.get('days', 30))
         
-        query = """
+        # Use the same user_id resolution logic as other endpoints
+        import re
+        is_uuid = re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', raw_user_id or '', re.IGNORECASE) is not None
+        if is_uuid:
+            where_sql = "t.user_id = %s"
+            where_param = raw_user_id
+        else:
+            where_sql = "t.user_id = (SELECT id FROM users WHERE firebase_uid = %s)"
+            where_param = raw_user_id
+        
+        query = f"""
         SELECT t.*, m.title as meeting_title 
         FROM tasks t
         JOIN meetings m ON t.meeting_id = m.id
-        WHERE t.user_id = %s 
+        WHERE {where_sql} 
         AND t.deadline IS NOT NULL 
         AND t.deadline <= NOW() + INTERVAL '%s days'
         AND t.status != 'completed'
         ORDER BY t.deadline ASC
         """
         
-        tasks = db.execute_query(query, (user_id, days_ahead))
+        tasks = db.execute_query(query, (where_param, days_ahead))
         
         # Format tasks
         formatted_tasks = []

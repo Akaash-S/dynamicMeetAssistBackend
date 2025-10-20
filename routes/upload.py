@@ -22,72 +22,188 @@ def allowed_file(filename):
 
 @upload_bp.route('/audio', methods=['POST'])
 @add_security_headers()
-@validate_file_upload()
-@validate_user_id()
 def upload_audio():
     """Upload audio file and start processing pipeline"""
     try:
+        print(f"🔍 Received upload request - Method: {request.method}")
+        print(f"🔍 Request files: {list(request.files.keys())}")
+        print(f"🔍 Request form data: {dict(request.form)}")
+        
+        # Manual validation since decorators might be failing
+        if 'audio' not in request.files:
+            print("❌ No audio file in request.files")
+            return jsonify({'error': 'No audio file provided'}), 400
+        
         file = request.files['audio']
-        file_info = request.file_info  # Added by validation middleware
-        user_id = request.validated_user_id  # Added by validation middleware
+        if file.filename == '':
+            print("❌ Empty filename")
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Validate user_id
+        user_id = request.form.get('user_id')
+        if not user_id:
+            print("❌ No user_id in form data")
+            return jsonify({'error': 'User ID is required'}), 400
+        
+        # Validate file manually
+        from middleware.validation import RequestValidator
+        try:
+            file_info = RequestValidator.validate_file_upload(file)
+            print(f"✅ File validation passed: {file_info}")
+        except Exception as validation_error:
+            print(f"❌ File validation failed: {validation_error}")
+            return jsonify({'error': f'File validation failed: {str(validation_error)}'}), 400
+        
+        # Validate and sanitize user_id
+        try:
+            user_id = RequestValidator.sanitize_string(user_id, 255)
+            print(f"✅ User ID validated: {user_id}")
+        except Exception as user_error:
+            print(f"❌ User ID validation failed: {user_error}")
+            return jsonify({'error': f'User ID validation failed: {str(user_error)}'}), 400
+        
+        # Check if storage service is properly initialized
+        if not storage or not hasattr(storage, 'client') or storage.client is None:
+            print("❌ Storage service not properly initialized - check SUPABASE_URL and SUPABASE_KEY")
+            return jsonify({'error': 'Storage service not available. Please check server configuration.'}), 500
+        
+        # Test storage connection before attempting upload
+        print("🔍 Testing storage connection...")
+        try:
+            if not storage.test_connection():
+                print("❌ Storage connection test failed")
+                return jsonify({
+                    'error': 'Cannot connect to storage service. This may be due to:\n' +
+                             '• Network connectivity issues\n' +
+                             '• Incorrect SUPABASE_URL or SUPABASE_KEY configuration\n' +
+                             '• Firewall blocking the connection\n' +
+                             'Please check your internet connection and server configuration.'
+                }), 500
+        except Exception as conn_test_error:
+            print(f"❌ Storage connection test error: {conn_test_error}")
+            error_message = str(conn_test_error)
+            if "getaddrinfo failed" in error_message:
+                return jsonify({
+                    'error': 'Network connectivity issue detected. Please check:\n' +
+                             '• Your internet connection\n' +
+                             '• SUPABASE_URL configuration\n' +
+                             '• Firewall settings'
+                }), 500
+            else:
+                return jsonify({
+                    'error': f'Storage service connection failed: {error_message}'
+                }), 500
+        
         meeting_title = request.form.get('title', 'Untitled Meeting')
         
         # Sanitize meeting title
-        from middleware.validation import RequestValidator
-        meeting_title = RequestValidator.sanitize_string(meeting_title, 255)
+        try:
+            meeting_title = RequestValidator.sanitize_string(meeting_title, 255)
+        except Exception as title_error:
+            print(f"❌ Meeting title validation failed: {title_error}")
+            meeting_title = 'Untitled Meeting'  # Default fallback
         
         # Generate unique filename using validated info
         unique_filename = f"{user_id}/{uuid.uuid4()}.{file_info['file_extension']}"
         
-        # Read file data
+        # Read file data - ensure file pointer is at beginning
+        file.seek(0)
         file_data = file.read()
         
-        print(f"📁 Uploading file: {file_info['original_filename']} ({file_info['file_size']} bytes)")
+        if len(file_data) == 0:
+            print("❌ File data is empty after reading")
+            return jsonify({'error': 'File is empty or could not be read'}), 400
+        
+        print(f"📁 Uploading file: {file_info['original_filename']} ({len(file_data)} bytes read, expected {file_info['file_size']} bytes)")
         
         # Upload to Supabase Storage
-        audio_url = storage.upload_file(
-            file_path=unique_filename,
-            file_data=file_data,
-            content_type=f'audio/{file_info["file_extension"]}'
-        )
-        
-        if not audio_url:
-            return jsonify({'error': 'Failed to upload file to storage'}), 500
+        try:
+            audio_url = storage.upload_file(
+                file_path=unique_filename,
+                file_data=file_data,
+                content_type=f'audio/{file_info["file_extension"]}'
+            )
+            
+            if not audio_url:
+                print(f"❌ Storage upload returned None for file: {unique_filename}")
+                return jsonify({
+                    'error': 'Failed to upload file to storage. This may be due to network connectivity issues or server configuration problems.'
+                }), 500
+                
+        except Exception as storage_error:
+            print(f"❌ Storage upload error: {storage_error}")
+            error_message = str(storage_error)
+            
+            # Provide specific error messages for common issues
+            if "getaddrinfo failed" in error_message:
+                return jsonify({
+                    'error': 'Network connectivity issue - unable to connect to storage server. Please check your internet connection and try again.'
+                }), 500
+            elif "ConnectionError" in error_message:
+                return jsonify({
+                    'error': 'Connection error - storage service is temporarily unavailable. Please try again later.'
+                }), 500
+            else:
+                return jsonify({
+                    'error': f'Storage upload failed: {error_message}'
+                }), 500
         
         print(f"☁️ File uploaded successfully: {audio_url}")
         
         # user_id is now the database user ID (not Firebase UID)
         print(f"📁 Creating meeting for database user ID: {user_id}")
         
+        # Test database connection before proceeding
+        try:
+            if not db.test_connection():
+                print("❌ Database connection test failed")
+                return jsonify({'error': 'Database connection failed'}), 500
+        except Exception as db_test_error:
+            print(f"❌ Database connection test error: {db_test_error}")
+            return jsonify({'error': f'Database connection error: {str(db_test_error)}'}), 500
+        
         # Create meeting record in database
         meeting_id = str(uuid.uuid4())
         
-        insert_meeting_query = """
-        INSERT INTO meetings (id, user_id, title, audio_url, status, file_size, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """
-        
-        db.execute_query(insert_meeting_query, (
-            meeting_id,
-            user_id,  # Use database user ID directly
-            meeting_title,
-            audio_url,
-            'processing',
-            file_info['file_size'],
-            datetime.utcnow()
-        ))
+        try:
+            insert_meeting_query = """
+            INSERT INTO meetings (id, user_id, title, audio_url, status, file_size, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """
+            
+            db.execute_query(insert_meeting_query, (
+                meeting_id,
+                user_id,  # Use database user ID directly
+                meeting_title,
+                audio_url,
+                'processing',
+                file_info['file_size'],
+                datetime.utcnow()
+            ))
+            
+            print(f"💾 Meeting record created: {meeting_id}")
+            
+        except Exception as db_error:
+            print(f"❌ Database error creating meeting: {db_error}")
+            return jsonify({'error': f'Failed to create meeting record: {str(db_error)}'}), 500
         
         # Create initial processing status
-        processing_steps = ['transcription', 'ai_analysis', 'task_extraction', 'calendar_sync']
+        try:
+            processing_steps = ['transcription', 'ai_analysis', 'task_extraction', 'calendar_sync']
+            
+            for step in processing_steps:
+                insert_status_query = """
+                INSERT INTO processing_status (meeting_id, step, status, progress)
+                VALUES (%s, %s, %s, %s)
+                """
+                db.execute_query(insert_status_query, (meeting_id, step, 'pending', 0))
+                
+            print(f"✅ Processing status records created for meeting: {meeting_id}")
+            
+        except Exception as status_error:
+            print(f"❌ Database error creating processing status: {status_error}")
+            # Don't fail the entire request if status creation fails, just log it
         
-        for step in processing_steps:
-            insert_status_query = """
-            INSERT INTO processing_status (meeting_id, step, status, progress)
-            VALUES (%s, %s, %s, %s)
-            """
-            db.execute_query(insert_status_query, (meeting_id, step, 'pending', 0))
-        
-        print(f"💾 Meeting record created: {meeting_id}")
         print(f"📊 Meeting details: title='{meeting_title}', user_id='{user_id}', status='processing'")
         
         # Start processing pipeline asynchronously (in a real app, use Celery or similar)
@@ -97,8 +213,11 @@ def upload_audio():
         except Exception as e:
             print(f"❌ Processing pipeline error: {e}")
             # Update meeting status to failed
-            update_meeting_query = "UPDATE meetings SET status = %s WHERE id = %s"
-            db.execute_query(update_meeting_query, ('failed', meeting_id))
+            try:
+                update_meeting_query = "UPDATE meetings SET status = %s WHERE id = %s"
+                db.execute_query(update_meeting_query, ('failed', meeting_id))
+            except Exception as update_error:
+                print(f"❌ Failed to update meeting status to failed: {update_error}")
         
         return jsonify({
             'success': True,
@@ -110,7 +229,10 @@ def upload_audio():
         }), 200
         
     except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
         print(f"❌ Upload error: {e}")
+        print(f"❌ Error traceback: {error_details}")
         return jsonify({'error': f'Upload failed: {str(e)}'}), 500
 
 def process_meeting_pipeline(meeting_id: str, audio_url: str, meeting_title: str):
@@ -238,16 +360,44 @@ def process_meeting_pipeline(meeting_id: str, audio_url: str, meeting_title: str
         # Step 4: Calendar Sync
         print(f"📅 Starting calendar sync for meeting {meeting_id}")
         update_processing_status('calendar_sync', 'processing', 40)
-        
+
         if tasks_data.get('tasks'):
-            calendar_result = calendar_service.create_task_events(tasks_data['tasks'], meeting_title)
-            
-            if not calendar_result['success']:
-                update_processing_status('calendar_sync', 'failed', 0, calendar_result['error'])
-                print(f"⚠️ Calendar sync failed: {calendar_result['error']}")
+            # Get user_id from meeting
+            get_user_query = "SELECT user_id FROM meetings WHERE id = %s"
+            user_result = db.execute_query(get_user_query, (meeting_id,))
+            user_id = user_result[0]['user_id'] if user_result else None
+
+            if user_id:
+                # Get user's Google access token
+                get_token_query = "SELECT google_access_token FROM users WHERE id = %s"
+                token_result = db.execute_query(get_token_query, (user_id,))
+                access_token = token_result[0]['google_access_token'] if token_result and token_result[0]['google_access_token'] else None
+
+                if access_token:
+                    print(f"🔑 Found Google Calendar access token for user {user_id}")
+                    synced_count = 0
+                    for task in tasks_data['tasks']:
+                        # Sync each task to Google Calendar
+                        sync_result = calendar_service.create_google_calendar_event(
+                            task=task,
+                            meeting_title=meeting_title,
+                            access_token=access_token
+                        )
+                        if sync_result['success']:
+                            synced_count += 1
+                            # Optionally, save the calendar_event_id to the task in the database
+                            if sync_result.get('event_id'):
+                                update_task_query = "UPDATE tasks SET calendar_event_id = %s WHERE title = %s AND meeting_id = %s"
+                                db.execute_query(update_task_query, (sync_result['event_id'], task.get('title'), meeting_id))
+
+                    print(f"✅ Synced {synced_count}/{len(tasks_data['tasks'])} tasks to Google Calendar")
+                    update_processing_status('calendar_sync', 'completed', 100)
+                else:
+                    print("⚠️ No Google Calendar access token found for user. Skipping sync.")
+                    update_processing_status('calendar_sync', 'completed', 100, error="Google Calendar not connected")
             else:
-                update_processing_status('calendar_sync', 'completed', 100)
-                print(f"✅ Calendar sync completed for meeting {meeting_id}")
+                print("⚠️ Could not find user for meeting. Skipping calendar sync.")
+                update_processing_status('calendar_sync', 'failed', 0, error="User not found for meeting")
         else:
             update_processing_status('calendar_sync', 'completed', 100)
             print(f"✅ Calendar sync completed (no tasks to sync) for meeting {meeting_id}")
