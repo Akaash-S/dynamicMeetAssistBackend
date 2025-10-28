@@ -368,33 +368,56 @@ def process_meeting_pipeline(meeting_id: str, audio_url: str, meeting_title: str
             user_id = user_result[0]['user_id'] if user_result else None
 
             if user_id:
-                # Get user's Google access token
-                get_token_query = "SELECT google_access_token FROM users WHERE id = %s"
+                # Get user's Google access token and refresh token
+                get_token_query = "SELECT google_access_token, google_refresh_token FROM users WHERE id = %s"
                 token_result = db.execute_query(get_token_query, (user_id,))
-                access_token = token_result[0]['google_access_token'] if token_result and token_result[0]['google_access_token'] else None
-
-                if access_token:
+                
+                if token_result and token_result[0]['google_access_token']:
+                    access_token = token_result[0]['google_access_token']
+                    refresh_token = token_result[0].get('google_refresh_token')
+                    
                     print(f"🔑 Found Google Calendar access token for user {user_id}")
-                    synced_count = 0
-                    for task in tasks_data['tasks']:
-                        # Sync each task to Google Calendar
-                        sync_result = calendar_service.create_google_calendar_event(
-                            task=task,
+                    
+                    # Test calendar access first
+                    test_result = calendar_service.test_calendar_access(access_token, refresh_token)
+                    
+                    if test_result['success']:
+                        print(f"✅ Calendar access verified for user {user_id}")
+                        
+                        # Sync all tasks at once
+                        sync_result = calendar_service.sync_multiple_tasks(
+                            tasks=tasks_data['tasks'],
                             meeting_title=meeting_title,
-                            access_token=access_token
+                            access_token=access_token,
+                            refresh_token=refresh_token
                         )
+                        
                         if sync_result['success']:
-                            synced_count += 1
-                            # Optionally, save the calendar_event_id to the task in the database
-                            if sync_result.get('event_id'):
-                                update_task_query = "UPDATE tasks SET calendar_event_id = %s WHERE title = %s AND meeting_id = %s"
-                                db.execute_query(update_task_query, (sync_result['event_id'], task.get('title'), meeting_id))
-
-                    print(f"✅ Synced {synced_count}/{len(tasks_data['tasks'])} tasks to Google Calendar")
-                    update_processing_status('calendar_sync', 'completed', 100)
+                            print(f"✅ Synced {sync_result['synced_count']}/{len(tasks_data['tasks'])} tasks to Google Calendar")
+                            
+                            # Update task records with calendar event IDs
+                            for event in sync_result['events']:
+                                update_task_query = """
+                                UPDATE tasks SET calendar_event_id = %s 
+                                WHERE title = %s AND meeting_id = %s
+                                """
+                                db.execute_query(update_task_query, (
+                                    event['event_id'], 
+                                    event['task_title'], 
+                                    meeting_id
+                                ))
+                            
+                            update_processing_status('calendar_sync', 'completed', 100)
+                        else:
+                            error_msg = f"Synced {sync_result['synced_count']}/{len(tasks_data['tasks'])} tasks. Errors: {sync_result.get('errors', [])}"
+                            print(f"⚠️ Partial calendar sync: {error_msg}")
+                            update_processing_status('calendar_sync', 'completed', 100, error=error_msg)
+                    else:
+                        print(f"❌ Calendar access test failed: {test_result['error']}")
+                        update_processing_status('calendar_sync', 'failed', 0, error=f"Calendar access failed: {test_result['error']}")
                 else:
                     print("⚠️ No Google Calendar access token found for user. Skipping sync.")
-                    update_processing_status('calendar_sync', 'completed', 100, error="Google Calendar not connected")
+                    update_processing_status('calendar_sync', 'completed', 100, error="Google Calendar not connected - user needs to re-authenticate")
             else:
                 print("⚠️ Could not find user for meeting. Skipping calendar sync.")
                 update_processing_status('calendar_sync', 'failed', 0, error="User not found for meeting")

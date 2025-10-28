@@ -1,355 +1,291 @@
 import os
-import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
-import requests
+import json
+
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 class CalendarSyncService:
     def __init__(self):
-        # For now, we'll implement a simple calendar service
-        # In production, you can integrate with Google Calendar, Outlook, etc.
-        self.calendar_events = []  # In-memory storage for demo
-    
-    def create_task_events(self, tasks: List[Dict], meeting_title: str) -> Dict:
-        """
-        Create calendar events for extracted tasks
-        """
-        try:
-            created_events = []
-            
-            for task in tasks:
-                event = self._create_calendar_event(task, meeting_title)
-                if event:
-                    created_events.append(event)
-            
-            print(f"📅 Created {len(created_events)} calendar events")
-            
-            return {
-                'success': True,
-                'events_created': len(created_events),
-                'events': created_events
-            }
-            
-        except Exception as e:
-            return {
-                'success': False,
-                'error': f'Calendar sync error: {str(e)}'
-            }
-    
-    def _create_calendar_event(self, task: Dict, meeting_title: str) -> Optional[Dict]:
-        """
-        Create a single calendar event for a task
-        """
-        try:
-            # Parse deadline
-            deadline_str = task.get('deadline')
-            if deadline_str:
-                try:
-                    deadline = datetime.strptime(deadline_str, '%Y-%m-%d')
-                except ValueError:
-                    # Try different date formats
-                    try:
-                        deadline = datetime.strptime(deadline_str, '%Y-%m-%d %H:%M:%S')
-                    except ValueError:
-                        deadline = datetime.now() + timedelta(days=7)  # Default to 1 week
-            else:
-                deadline = datetime.now() + timedelta(days=7)
-            
-            # Create event data
-            event = {
-                'id': f"task_{len(self.calendar_events) + 1}",
-                'title': f"📋 {task.get('title', 'Untitled Task')}",
-                'description': self._format_task_description(task, meeting_title),
-                'start_time': deadline.replace(hour=9, minute=0),  # Default to 9 AM
-                'end_time': deadline.replace(hour=10, minute=0),   # 1 hour duration
-                'all_day': False,
-                'priority': task.get('priority', 'medium'),
-                'assigned_to': task.get('assigned_to', 'Unassigned'),
-                'task_id': task.get('id'),
-                'meeting_title': meeting_title,
-                'created_at': datetime.now().isoformat()
-            }
-            
-            # Add to our in-memory storage
-            self.calendar_events.append(event)
-            
-            return event
-            
-        except Exception as e:
-            print(f"❌ Error creating calendar event: {e}")
-            return None
-    
-    def _format_task_description(self, task: Dict, meeting_title: str) -> str:
-        """
-        Format task description for calendar event
-        """
-        description_parts = [
-            f"Task from meeting: {meeting_title}",
-            "",
-            f"Description: {task.get('description', 'No description provided')}",
-            f"Assigned to: {task.get('assigned_to', 'Unassigned')}",
-            f"Priority: {task.get('priority', 'medium').upper()}",
-            f"Status: {task.get('status', 'pending').upper()}"
-        ]
-        
-        if task.get('dependencies'):
-            description_parts.extend([
-                "",
-                "Dependencies:",
-                *[f"• {dep}" for dep in task['dependencies']]
-            ])
-        
-        if task.get('estimated_hours'):
-            description_parts.extend([
-                "",
-                f"Estimated time: {task['estimated_hours']} hours"
-            ])
-        
-        return "\n".join(description_parts)
-    
-    def get_upcoming_tasks(self, days_ahead: int = 30) -> List[Dict]:
-        """
-        Get upcoming task events
-        """
-        cutoff_date = datetime.now() + timedelta(days=days_ahead)
-        
-        upcoming = [
-            event for event in self.calendar_events
-            if datetime.fromisoformat(event['start_time'].replace('Z', '+00:00')) <= cutoff_date
-        ]
-        
-        # Sort by start time
-        upcoming.sort(key=lambda x: x['start_time'])
-        
-        return upcoming
-    
-    def update_task_status(self, task_id: str, status: str) -> Dict:
-        """
-        Update task status in calendar
-        """
-        try:
-            for event in self.calendar_events:
-                if event.get('task_id') == task_id:
-                    # Update event title to reflect status
-                    if status == 'completed':
-                        event['title'] = f"✅ {event['title'].replace('📋 ', '').replace('✅ ', '')}"
-                    elif status == 'in_progress':
-                        event['title'] = f"🔄 {event['title'].replace('📋 ', '').replace('🔄 ', '')}"
-                    else:
-                        event['title'] = f"📋 {event['title'].replace('📋 ', '').replace('✅ ', '').replace('🔄 ', '')}"
-                    
-                    event['updated_at'] = datetime.now().isoformat()
-                    
-                    return {
-                        'success': True,
-                        'message': f'Task status updated to {status}'
-                    }
-            
-            return {
-                'success': False,
-                'error': 'Task not found in calendar'
-            }
-            
-        except Exception as e:
-            return {
-                'success': False,
-                'error': f'Error updating task status: {str(e)}'
-            }
-    
-    def delete_task_event(self, task_id: str) -> Dict:
-        """
-        Delete task event from calendar
-        """
-        try:
-            original_count = len(self.calendar_events)
-            self.calendar_events = [
-                event for event in self.calendar_events
-                if event.get('task_id') != task_id
-            ]
-            
-            deleted_count = original_count - len(self.calendar_events)
-            
-            return {
-                'success': True,
-                'deleted_count': deleted_count,
-                'message': f'Deleted {deleted_count} calendar event(s)'
-            }
-            
-        except Exception as e:
-            return {
-                'success': False,
-                'error': f'Error deleting task event: {str(e)}'
-            }
-    
-    def integrate_google_calendar(self, credentials: Dict) -> Dict:
-        """
-        Integrate with Google Calendar API using OAuth2 credentials
-        """
-        try:
-            # Validate credentials
-            access_token = credentials.get('access_token')
-            if not access_token:
-                return {
-                    'success': False,
-                    'error': 'No access token provided'
-                }
+        self.client_id = os.getenv('GOOGLE_CLIENT_ID')
+        self.client_secret = os.getenv('GOOGLE_CLIENT_SECRET')
+        self.scopes = ['https://www.googleapis.com/auth/calendar']
 
-            # Test the connection by making a simple API call
-            headers = {
-                'Authorization': f'Bearer {access_token}',
-                'Content-Type': 'application/json'
-            }
-
-            # Get user's calendar list to verify connection
-            response = requests.get(
-                'https://www.googleapis.com/calendar/v3/users/me/calendarList',
-                headers=headers,
-                timeout=10
+    def build_service(self, access_token: str, refresh_token: Optional[str] = None):
+        """Build Google Calendar service with OAuth credentials"""
+        try:
+            creds = Credentials(
+                token=access_token,
+                refresh_token=refresh_token,
+                token_uri='https://oauth2.googleapis.com/token',
+                client_id=self.client_id,
+                client_secret=self.client_secret,
+                scopes=self.scopes
             )
-
-            if response.status_code == 200:
-                return {
-                    'success': True,
-                    'message': 'Google Calendar integration successful',
-                    'calendars': len(response.json().get('items', []))
-                }
-            else:
-                return {
-                    'success': False,
-                    'error': f'Google Calendar API error: {response.status_code}'
-                }
-
+            
+            service = build('calendar', 'v3', credentials=creds)
+            
+            # Test the service by making a simple call
+            service.calendarList().list(maxResults=1).execute()
+            
+            return service
+            
         except Exception as e:
-            return {
-                'success': False,
-                'error': f'Google Calendar integration failed: {str(e)}'
-            }
+            print(f"❌ Failed to build calendar service: {e}")
+            raise e
 
-    def create_google_calendar_event(self, task: Dict, meeting_title: str, access_token: str) -> Dict:
-        """
-        Create a Google Calendar event for a task
-        """
+    def create_google_calendar_event(self, task: Dict, meeting_title: str, access_token: str, refresh_token: Optional[str] = None) -> Dict:
         try:
-            # Validate access token
-            if not access_token:
-                return {
-                    'success': False,
-                    'error': 'No Google Calendar access token provided'
-                }
+            service = self.build_service(access_token, refresh_token)
 
             # Parse deadline
             deadline_str = task.get('deadline')
             if deadline_str:
                 try:
-                    deadline = datetime.strptime(deadline_str, '%Y-%m-%d')
-                except ValueError:
-                    try:
-                        deadline = datetime.strptime(deadline_str, '%Y-%m-%d %H:%M:%S')
-                    except ValueError:
-                        deadline = datetime.now() + timedelta(days=7)
+                    if isinstance(deadline_str, str):
+                        deadline = datetime.fromisoformat(deadline_str.replace('Z', '+00:00'))
+                    else:
+                        deadline = deadline_str
+                except (ValueError, TypeError):
+                    deadline = datetime.now() + timedelta(days=7)
             else:
                 deadline = datetime.now() + timedelta(days=7)
 
-            # Create event 30 minutes before deadline
-            event_start = deadline.replace(hour=9, minute=0) - timedelta(minutes=30)
-            event_end = deadline.replace(hour=9, minute=0)
+            # Create a 30-minute reminder event before the deadline
+            event_start = deadline - timedelta(minutes=30)
+            event_end = deadline
 
-            # Create event data for Google Calendar API
+            # Create event data
             event_data = {
-                'summary': f"📋 Task Deadline: {task.get('title', 'Untitled Task')}",
+                'summary': f'📋 Task: {task.get("title", "Untitled Task")}',
                 'description': self._format_task_description(task, meeting_title),
                 'start': {
-                    'dateTime': event_start.isoformat() + 'Z',
+                    'dateTime': event_start.isoformat(),
                     'timeZone': 'UTC'
                 },
                 'end': {
-                    'dateTime': event_end.isoformat() + 'Z',
+                    'dateTime': event_end.isoformat(),
                     'timeZone': 'UTC'
                 },
                 'reminders': {
                     'useDefault': False,
                     'overrides': [
-                        {'method': 'email', 'minutes': 60},  # 1 hour before
-                        {'method': 'popup', 'minutes': 15}   # 15 minutes before
+                        {'method': 'email', 'minutes': 60},
+                        {'method': 'popup', 'minutes': 15}
                     ]
+                },
+                'colorId': self._get_priority_color(task.get('priority', 'medium')),
+                'source': {
+                    'title': 'AI Meeting Assistant',
+                    'url': 'https://your-app-domain.com'
                 }
             }
 
-            # Make API call to create event
-            headers = {
-                'Authorization': f'Bearer {access_token}',
-                'Content-Type': 'application/json'
+            event = service.events().insert(calendarId='primary', body=event_data).execute()
+
+            return {
+                'success': True,
+                'event_id': event.get('id'),
+                'event_link': event.get('htmlLink'),
+                'message': f'Task "{task.get("title")}" synced to Google Calendar'
             }
 
-            response = requests.post(
-                'https://www.googleapis.com/calendar/v3/calendars/primary/events',
-                headers=headers,
-                json=event_data,
-                timeout=10
-            )
-
-            if response.status_code == 200:
-                event_result = response.json()
-                return {
-                    'success': True,
-                    'event_id': event_result.get('id'),
-                    'event_link': event_result.get('htmlLink'),
-                    'message': f'Task "{task.get("title")}" synced to Google Calendar'
-                }
-            else:
-                return {
-                    'success': False,
-                    'error': f'Failed to create Google Calendar event: {response.status_code}'
-                }
-
+        except HttpError as e:
+            error_details = json.loads(e.content.decode('utf-8'))
+            return {
+                'success': False,
+                'error': f'Google Calendar API error: {error_details.get("error", {}).get("message", str(e))}'
+            }
         except Exception as e:
             return {
                 'success': False,
                 'error': f'Error creating Google Calendar event: {str(e)}'
             }
+
+    def _format_task_description(self, task: Dict, meeting_title: str) -> str:
+        """Format task description for calendar event"""
+        description_parts = [
+            f"🎯 Task from meeting: {meeting_title}",
+            "",
+            f"📝 Description: {task.get('description', 'No description provided')}",
+            f"👤 Assigned to: {task.get('assigned_to', 'Unassigned')}",
+            f"⚡ Priority: {task.get('priority', 'medium').upper()}",
+            f"📊 Status: {task.get('status', 'pending').upper()}",
+            "",
+            "🤖 This event was automatically created by AI Meeting Assistant",
+            "📅 This is a reminder for your task deadline"
+        ]
+        return "\n".join(description_parts)
     
-    def integrate_outlook_calendar(self, credentials: Dict) -> Dict:
-        """
-        Future implementation for Outlook Calendar integration
-        """
-        # This would integrate with Microsoft Graph API
-        # For now, return a placeholder response
-        return {
-            'success': False,
-            'error': 'Outlook Calendar integration not implemented yet',
-            'message': 'Using in-memory calendar for demo purposes'
+    def _get_priority_color(self, priority: str) -> str:
+        """Get Google Calendar color ID based on task priority"""
+        color_map = {
+            'high': '11',    # Red
+            'medium': '5',   # Yellow
+            'low': '2'       # Green
         }
+        return color_map.get(priority.lower(), '5')  # Default to yellow
     
-    def get_calendar_health(self) -> Dict:
-        """Check if calendar service is healthy"""
+    def sync_multiple_tasks(self, tasks: List[Dict], meeting_title: str, access_token: str, refresh_token: Optional[str] = None) -> Dict:
+        """Sync multiple tasks to Google Calendar"""
+        results = {
+            'success': True,
+            'synced_count': 0,
+            'failed_count': 0,
+            'events': [],
+            'errors': []
+        }
+        
         try:
+            service = self.build_service(access_token, refresh_token)
+            
+            for task in tasks:
+                try:
+                    sync_result = self.create_google_calendar_event(task, meeting_title, access_token, refresh_token)
+                    
+                    if sync_result['success']:
+                        results['synced_count'] += 1
+                        results['events'].append({
+                            'task_title': task.get('title'),
+                            'event_id': sync_result['event_id'],
+                            'event_link': sync_result['event_link']
+                        })
+                    else:
+                        results['failed_count'] += 1
+                        results['errors'].append({
+                            'task_title': task.get('title'),
+                            'error': sync_result['error']
+                        })
+                        
+                except Exception as e:
+                    results['failed_count'] += 1
+                    results['errors'].append({
+                        'task_title': task.get('title', 'Unknown'),
+                        'error': str(e)
+                    })
+            
+            if results['failed_count'] > 0:
+                results['success'] = False
+                
+            return results
+            
+        except Exception as e:
             return {
-                'service': 'calendar_sync',
-                'status': 'healthy',
-                'events_count': len(self.calendar_events),
-                'integrations': {
-                    'google_calendar': 'not_configured',
-                    'outlook_calendar': 'not_configured',
-                    'in_memory_storage': 'active'
+                'success': False,
+                'error': f'Failed to sync tasks to calendar: {str(e)}',
+                'synced_count': 0,
+                'failed_count': len(tasks)
+            }
+    
+    def update_calendar_event(self, event_id: str, task: Dict, meeting_title: str, access_token: str, refresh_token: Optional[str] = None) -> Dict:
+        """Update an existing calendar event"""
+        try:
+            service = self.build_service(access_token, refresh_token)
+            
+            # Get existing event
+            event = service.events().get(calendarId='primary', eventId=event_id).execute()
+            
+            # Update event data
+            deadline_str = task.get('deadline')
+            if deadline_str:
+                try:
+                    deadline = datetime.fromisoformat(deadline_str.replace('Z', '+00:00'))
+                except (ValueError, TypeError):
+                    deadline = datetime.now() + timedelta(days=7)
+            else:
+                deadline = datetime.now() + timedelta(days=7)
+
+            event_start = deadline - timedelta(minutes=30)
+            event_end = deadline
+            
+            event['summary'] = f'📋 Task: {task.get("title", "Untitled Task")}'
+            event['description'] = self._format_task_description(task, meeting_title)
+            event['start'] = {
+                'dateTime': event_start.isoformat(),
+                'timeZone': 'UTC'
+            }
+            event['end'] = {
+                'dateTime': event_end.isoformat(),
+                'timeZone': 'UTC'
+            }
+            event['colorId'] = self._get_priority_color(task.get('priority', 'medium'))
+            
+            # Update the event
+            updated_event = service.events().update(
+                calendarId='primary',
+                eventId=event_id,
+                body=event
+            ).execute()
+            
+            return {
+                'success': True,
+                'event_id': updated_event.get('id'),
+                'event_link': updated_event.get('htmlLink'),
+                'message': f'Task "{task.get("title")}" updated in Google Calendar'
+            }
+            
+        except HttpError as e:
+            error_details = json.loads(e.content.decode('utf-8'))
+            return {
+                'success': False,
+                'error': f'Google Calendar API error: {error_details.get("error", {}).get("message", str(e))}'
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Error updating Google Calendar event: {str(e)}'
+            }
+    
+    def delete_calendar_event(self, event_id: str, access_token: str, refresh_token: Optional[str] = None) -> Dict:
+        """Delete a calendar event"""
+        try:
+            service = self.build_service(access_token, refresh_token)
+            
+            service.events().delete(calendarId='primary', eventId=event_id).execute()
+            
+            return {
+                'success': True,
+                'message': 'Calendar event deleted successfully'
+            }
+            
+        except HttpError as e:
+            if e.resp.status == 404:
+                return {
+                    'success': True,
+                    'message': 'Calendar event not found (may have been already deleted)'
                 }
+            else:
+                error_details = json.loads(e.content.decode('utf-8'))
+                return {
+                    'success': False,
+                    'error': f'Google Calendar API error: {error_details.get("error", {}).get("message", str(e))}'
+                }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Error deleting Google Calendar event: {str(e)}'
+            }
+    
+    def test_calendar_access(self, access_token: str, refresh_token: Optional[str] = None) -> Dict:
+        """Test if calendar access is working"""
+        try:
+            service = self.build_service(access_token, refresh_token)
+            
+            # Try to list calendars
+            calendar_list = service.calendarList().list(maxResults=1).execute()
+            
+            return {
+                'success': True,
+                'message': 'Google Calendar access is working',
+                'calendar_count': len(calendar_list.get('items', []))
             }
             
         except Exception as e:
             return {
-                'service': 'calendar_sync',
-                'status': 'unhealthy',
-                'error': str(e)
+                'success': False,
+                'error': f'Calendar access test failed: {str(e)}'
             }
-    
-    def export_calendar_data(self) -> Dict:
-        """
-        Export calendar data for debugging or migration
-        """
-        return {
-            'total_events': len(self.calendar_events),
-            'events': self.calendar_events,
-            'export_timestamp': datetime.now().isoformat()
-        }
 
-# Global calendar sync service instance
 calendar_service = CalendarSyncService()

@@ -1,9 +1,14 @@
 from flask import Blueprint, request, jsonify
 import uuid
+import logging
+import os
 from datetime import datetime
 
 from config.database import db
 from middleware.validation import validate_json, add_security_headers, RequestValidator
+
+# Set up logger
+logger = logging.getLogger(__name__)
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -12,8 +17,10 @@ auth_bp = Blueprint('auth', __name__)
 @validate_json('email')
 def verify_user():
     """Verify user and create/update user record - supports both Firebase and OAuth2"""
+    print('Backend: /verify endpoint hit')
     try:
         data = request.get_json()
+        print(f'Backend: Received data: {data}')
         
         email = RequestValidator.sanitize_string(data['email'], 255)
         name = RequestValidator.sanitize_string(data.get('name', ''), 255) or email.split('@')[0]
@@ -25,21 +32,51 @@ def verify_user():
         # Determine authentication method
         firebase_uid = data.get('firebase_uid')
         google_oauth_id = data.get('google_oauth_id')
-        auth_provider = 'firebase' if firebase_uid else 'google_oauth'
+        auth_provider = data.get('auth_provider', 'firebase')
+        force_create = data.get('force_create', False)  # Flag to force user creation
+        
+        # For Firebase Google OAuth users, use firebase_uid as the identifier
+        if firebase_uid and auth_provider == 'google_oauth':
+            # This is a Firebase user who signed in with Google
+            google_oauth_id = firebase_uid  # Use Firebase UID as Google OAuth ID for consistency
         
         # Validate that at least one auth method is provided
         if not firebase_uid and not google_oauth_id:
             return jsonify({'error': 'Either firebase_uid or google_oauth_id is required'}), 400
         
-        # Check if user already exists by email or auth identifiers
-        check_query = """
-        SELECT * FROM users 
-        WHERE email = %s OR firebase_uid = %s OR google_oauth_id = %s
-        """
-        existing_user = db.execute_query(check_query, (email, firebase_uid or '', google_oauth_id or ''))
+        # Check if user already exists (unless force_create is True)
+        existing_user = None
+        if not force_create:
+            # Strategy 1: Look for exact email match first (most reliable)
+            email_query = "SELECT * FROM users WHERE email = %s"
+            email_result = db.execute_query(email_query, [email])
+            
+            if email_result:
+                existing_user = email_result
+                print(f'Backend: Found existing user by email: {email}')
+            else:
+                # Strategy 2: Look by auth identifiers only if no email match
+                auth_queries = []
+                
+                if firebase_uid:
+                    firebase_result = db.execute_query("SELECT * FROM users WHERE firebase_uid = %s", [firebase_uid])
+                    if firebase_result:
+                        existing_user = firebase_result
+                        print(f'Backend: Found existing user by firebase_uid: {firebase_uid}')
+                
+                if not existing_user and google_oauth_id:
+                    google_result = db.execute_query("SELECT * FROM users WHERE google_oauth_id = %s", [google_oauth_id])
+                    if google_result:
+                        existing_user = google_result
+                        print(f'Backend: Found existing user by google_oauth_id: {google_oauth_id}')
+            
+            print(f'Backend: User lookup result - email: {email}, found: {len(existing_user) if existing_user else 0} users')
+        else:
+            print('Backend: force_create=True, skipping existing user check')
         
-        if existing_user:
+        if existing_user and not force_create:
             # Update existing user
+            print('Backend: Existing user found, updating user.')
             user = existing_user[0]
             update_query = """
             UPDATE users 
@@ -73,6 +110,7 @@ def verify_user():
             params.append(user['id'])
             
             db.execute_query(update_query, params)
+            print('Backend: User updated successfully.')
             
             return jsonify({
                 'success': True,
@@ -90,6 +128,7 @@ def verify_user():
             }), 200
         else:
             # Create new user
+            print("✅ No existing user found. Creating new user.")
             user_id = str(uuid.uuid4())
             insert_query = """
             INSERT INTO users (id, firebase_uid, google_oauth_id, email, name, auth_provider, 
@@ -98,7 +137,7 @@ def verify_user():
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             
-            db.execute_query(insert_query, (
+            insert_params = (
                 user_id,
                 firebase_uid,
                 google_oauth_id,
@@ -111,8 +150,18 @@ def verify_user():
                 data.get('google_calendar_enabled', False),
                 datetime.utcnow(),
                 datetime.utcnow()
-            ))
+            )
             
+            print(f"🔍 INSERT query: {insert_query}")
+            print(f"🔍 INSERT params: {insert_params}")
+            
+            try:
+                result = db.execute_query(insert_query, insert_params)
+                print(f"✅ User created successfully. Result: {result}")
+            except Exception as e:
+                print(f"❌ Error creating user: {e}")
+                return jsonify({'error': f'Failed to create user: {str(e)}'}), 500
+
             return jsonify({
                 'success': True,
                 'user': {
@@ -131,72 +180,81 @@ def verify_user():
     except Exception as e:
         return jsonify({'error': f'User verification failed: {str(e)}'}), 500
 
-@auth_bp.route('/user/<firebase_uid>', methods=['GET'])
-def get_user(firebase_uid):
-    """Get user by Firebase UID - Always returns latest data from PostgreSQL (source of truth)"""
+@auth_bp.route('/user/<identifier>', methods=['GET'])
+@add_security_headers()
+def get_user(identifier):
+    """Get user by identifier (firebase_uid, email, or google_oauth_id) - Always returns latest data from PostgreSQL"""
     try:
-        # Validate firebase_uid parameter
-        if not firebase_uid or not firebase_uid.strip():
-            print(f"❌ Invalid firebase_uid parameter: '{firebase_uid}'")
+        # Validate identifier parameter
+        if not identifier or not identifier.strip():
+            print(f"❌ Invalid identifier parameter: '{identifier}'")
             return jsonify({
-                'error': 'Invalid firebase_uid parameter',
-                'message': 'firebase_uid is required and cannot be empty'
+                'success': False,
+                'error': 'Invalid identifier parameter',
+                'message': 'identifier is required and cannot be empty'
             }), 400
         
-        print(f"🔍 Getting user data for firebase_uid: {firebase_uid}")
+        identifier = RequestValidator.sanitize_string(identifier, 255)
+        print(f"🔍 Getting user data for identifier: {identifier}")
         
-        # Query database for latest user data (PostgreSQL is source of truth)
-        query = """
-        SELECT id, firebase_uid, email, name, email_notifications, in_app_notifications, 
-               created_at, updated_at 
-        FROM users 
-        WHERE firebase_uid = %s
-        """
+        # Try different lookup methods in order of reliability
+        lookup_strategies = [
+            ("firebase_uid", "SELECT * FROM users WHERE firebase_uid = %s"),
+            ("email", "SELECT * FROM users WHERE email = %s"),
+            ("google_oauth_id", "SELECT * FROM users WHERE google_oauth_id = %s"),
+            ("id", "SELECT * FROM users WHERE id = %s")
+        ]
         
-        try:
-            result = db.execute_query(query, (firebase_uid,))
-            print(f"🔍 Database query result: {len(result) if result else 0} users found")
-        except Exception as db_error:
-            print(f"❌ Database query failed: {db_error}")
+        user = None
+        found_by = None
+        
+        for strategy_name, query in lookup_strategies:
+            try:
+                result = db.execute_query(query, [identifier])
+                if result and len(result) > 0:
+                    user = result[0]
+                    found_by = strategy_name
+                    print(f"🔍 Found user by {strategy_name}: {user['email']}")
+                    break
+            except Exception as query_error:
+                print(f"❌ Query failed for {strategy_name}: {query_error}")
+                continue
+        
+        if not user:
+            print(f"❌ No user found for identifier: {identifier}")
             return jsonify({
-                'error': 'Database query failed',
-                'message': 'Unable to retrieve user from database',
-                'details': str(db_error)
-            }), 500
-        
-        if not result or len(result) == 0:
-            print(f"❌ User not found with firebase_uid: {firebase_uid}")
-            return jsonify({
+                'success': False,
                 'error': 'User not found',
-                'message': f'No user found with firebase_uid: {firebase_uid}. Please verify user first.',
-                'firebase_uid': firebase_uid,
+                'message': f'No user found with identifier: {identifier}. Please verify user first.',
+                'identifier': identifier,
                 'action_required': 'verify_user'
             }), 404
         
-        user = result[0]
-        
+        # Return user data with all fields
         return jsonify({
             'success': True,
             'source': 'postgresql_database',
+            'found_by': found_by,
             'user': {
                 'id': str(user['id']),
                 'firebase_uid': user.get('firebase_uid'),
                 'google_oauth_id': user.get('google_oauth_id'),
                 'email': user['email'],
-                'name': user['name'],  # This is the latest value from DB
+                'name': user['name'],
                 'auth_provider': user.get('auth_provider', 'firebase'),
-                'email_notifications': bool(user['email_notifications']),
-                'in_app_notifications': bool(user['in_app_notifications']),
+                'email_notifications': bool(user.get('email_notifications', True)),
+                'in_app_notifications': bool(user.get('in_app_notifications', True)),
                 'google_calendar_enabled': bool(user.get('google_calendar_enabled', False)),
-                'created_at': user['created_at'].isoformat() if user['created_at'] else None,
-                'updated_at': user['updated_at'].isoformat() if user['updated_at'] else None
+                'created_at': user['created_at'].isoformat() if user.get('created_at') else None,
+                'updated_at': user['updated_at'].isoformat() if user.get('updated_at') else None
             }
         }), 200
         
     except Exception as e:
         # Log the error for debugging
-        print(f"Error in get_user: {str(e)}")
+        print(f"❌ Error in get_user: {str(e)}")
         return jsonify({
+            'success': False,
             'error': 'Internal server error',
             'message': 'An unexpected error occurred while retrieving user data',
             'details': str(e)
@@ -550,8 +608,9 @@ def delete_user_account(firebase_uid):
     except Exception as e:
         return jsonify({'error': f'Failed to delete account: {str(e)}'}), 500
 
-@auth_bp.route('/user/<firebase_uid>/google-auth', methods=['PUT'])
-def link_google_account(firebase_uid):
+@auth_bp.route('/user/<user_id>/google-auth', methods=['PUT'])
+@add_security_headers()
+def link_google_account(user_id):
     """Link Google account and store OAuth tokens"""
     try:
         data = request.get_json()
@@ -561,9 +620,9 @@ def link_google_account(firebase_uid):
         access_token = data['access_token']
         refresh_token = data.get('refresh_token')  # Optional
 
-        # Check if user exists
-        check_query = "SELECT id FROM users WHERE firebase_uid = %s"
-        check_result = db.execute_query(check_query, (firebase_uid,))
+        # Check if user exists (by ID, not firebase_uid)
+        check_query = "SELECT id FROM users WHERE id = %s"
+        check_result = db.execute_query(check_query, (user_id,))
 
         if not check_result:
             return jsonify({'error': 'User not found'}), 404
@@ -572,10 +631,10 @@ def link_google_account(firebase_uid):
         update_query = """
         UPDATE users
         SET google_access_token = %s, google_refresh_token = %s, updated_at = %s
-        WHERE firebase_uid = %s
+        WHERE id = %s
         """
 
-        db.execute_query(update_query, (access_token, refresh_token, datetime.utcnow(), firebase_uid))
+        db.execute_query(update_query, (access_token, refresh_token, datetime.utcnow(), user_id))
 
         return jsonify({
             'success': True,
@@ -584,6 +643,76 @@ def link_google_account(firebase_uid):
 
     except Exception as e:
         return jsonify({'error': f'Failed to link Google account: {str(e)}'}), 500
+
+@auth_bp.route('/google-calendar/exchange-token', methods=['POST'])
+@add_security_headers()
+@validate_json('code', 'user_id')
+def exchange_calendar_token():
+    """Exchange Google OAuth code for calendar access tokens (backend proxy to avoid CSP issues)"""
+    try:
+        data = request.get_json()
+        code = data['code']
+        user_id = data['user_id']
+        
+        # Google OAuth token exchange
+        import requests
+        
+        client_id = os.getenv('GOOGLE_CLIENT_ID')
+        client_secret = os.getenv('GOOGLE_CLIENT_SECRET')
+        redirect_uri = data.get('redirect_uri', f"{request.host_url.rstrip('/')}/calendar-connect")
+        
+        if not client_id or not client_secret:
+            return jsonify({
+                'success': False,
+                'error': 'Google OAuth not configured on server'
+            }), 500
+        
+        # Exchange code for tokens
+        token_url = 'https://oauth2.googleapis.com/token'
+        token_data = {
+            'client_id': client_id,
+            'client_secret': client_secret,
+            'code': code,
+            'grant_type': 'authorization_code',
+            'redirect_uri': redirect_uri
+        }
+        
+        token_response = requests.post(token_url, data=token_data)
+        
+        if not token_response.ok:
+            error_data = token_response.json()
+            return jsonify({
+                'success': False,
+                'error': f"Token exchange failed: {error_data.get('error_description', error_data.get('error'))}"
+            }), 400
+        
+        tokens = token_response.json()
+        
+        # Store tokens in database
+        update_query = """
+        UPDATE users
+        SET google_access_token = %s, google_refresh_token = %s, updated_at = %s
+        WHERE id = %s
+        """
+        
+        db.execute_query(update_query, (
+            tokens['access_token'],
+            tokens.get('refresh_token'),
+            datetime.utcnow(),
+            user_id
+        ))
+        
+        return jsonify({
+            'success': True,
+            'message': 'Google Calendar connected successfully'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Calendar token exchange error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Token exchange failed: {str(e)}'
+        }), 500
 
 @auth_bp.route('/google-oauth', methods=['POST'])
 @add_security_headers()
@@ -597,19 +726,36 @@ def verify_google_oauth():
         email = RequestValidator.sanitize_string(data['email'], 255)
         name = RequestValidator.sanitize_string(data.get('name', ''), 255) or email.split('@')[0]
         google_oauth_id = data.get('google_oauth_id', data.get('id'))
+        force_create = data.get('force_create', False)
+        
+        print(f'Backend: Google OAuth request - email: {email}, force_create: {force_create}')
         
         # Validate email format
         if not RequestValidator.validate_email(email):
             return jsonify({'error': 'Invalid email format'}), 400
         
-        # Check if user already exists
-        check_query = """
-        SELECT * FROM users 
-        WHERE email = %s OR google_oauth_id = %s
-        """
-        existing_user = db.execute_query(check_query, (email, google_oauth_id or ''))
+        # Check if user already exists (unless force_create is True)
+        existing_user = None
+        if not force_create:
+            # Strategy 1: Look for exact email match first (most reliable)
+            email_query = "SELECT * FROM users WHERE email = %s"
+            email_result = db.execute_query(email_query, [email])
+            
+            if email_result:
+                existing_user = email_result
+                print(f'Backend: OAuth - Found existing user by email: {email}')
+            elif google_oauth_id:
+                # Strategy 2: Look by google_oauth_id only if no email match
+                google_result = db.execute_query("SELECT * FROM users WHERE google_oauth_id = %s", [google_oauth_id])
+                if google_result:
+                    existing_user = google_result
+                    print(f'Backend: OAuth - Found existing user by google_oauth_id: {google_oauth_id}')
+            
+            print(f'Backend: OAuth user lookup result - email: {email}, found: {len(existing_user) if existing_user else 0} users')
+        else:
+            print('Backend: OAuth force_create=True, skipping existing user check')
         
-        if existing_user:
+        if existing_user and not force_create:
             # Update existing user with Google OAuth info
             user = existing_user[0]
             update_query = """

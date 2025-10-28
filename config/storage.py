@@ -1,6 +1,9 @@
 from supabase import create_client, Client
 import os
 from typing import Optional
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class StorageService:
     def __init__(self):

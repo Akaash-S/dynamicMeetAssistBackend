@@ -215,7 +215,7 @@ def create_app():
     app.register_blueprint(tasks_bp, url_prefix='/api/tasks')
     app.register_blueprint(upload_bp, url_prefix='/api/upload')
     app.register_blueprint(health_bp, url_prefix='/api/health/detailed')
-    app.register_blueprint(google_calendar_bp, url_prefix='/api/google-calendar')
+    app.register_blueprint(google_calendar_bp, url_prefix='/api/calendar')
     
     # Register CORS debug routes (development only)
     if flask_env == 'development':
