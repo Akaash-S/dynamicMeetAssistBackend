@@ -7,7 +7,7 @@ import requests
 import json
 
 def test_profile_update():
-    base_url = "http://localhost:5000"
+    base_url = "http://localhost:8000"
     
     # Test data
     test_firebase_uid = "test_user_123"

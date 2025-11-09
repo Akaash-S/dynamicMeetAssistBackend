@@ -2,7 +2,7 @@ from flask import Blueprint, jsonify
 from datetime import datetime
 import psycopg2
 
-from config.database import db
+from config.database import get_db
 from config.storage import storage
 from services.transcription import transcription_service
 from services.ai_processor import ai_processor
@@ -139,10 +139,10 @@ def check_database_health():
     try:
         # Test connection
         test_query = "SELECT 1 as test"
-        result = db.execute_query(test_query)
+        result = get_db().execute_query(test_query)
         
         # Get pool status
-        pool_status = db.get_pool_status()
+        pool_status = get_db().get_pool_status()
         
         if result and result[0]['test'] == 1:
             return {
@@ -165,7 +165,7 @@ def check_database_health():
             'service': 'database',
             'status': 'unhealthy',
             'error': f'Connection failed: {str(e)}',
-            'connection_pool': db.get_pool_status()
+            'connection_pool': get_db().get_pool_status()
         }
     except Exception as e:
         return {
@@ -207,27 +207,27 @@ def get_database_metrics():
         
         # Count meetings
         meetings_query = "SELECT COUNT(*) as count FROM meetings"
-        meetings_result = db.execute_query(meetings_query)
+        meetings_result = get_db().execute_query(meetings_query)
         metrics['total_meetings'] = meetings_result[0]['count'] if meetings_result else 0
         
         # Count tasks
         tasks_query = "SELECT COUNT(*) as count FROM tasks"
-        tasks_result = db.execute_query(tasks_query)
+        tasks_result = get_db().execute_query(tasks_query)
         metrics['total_tasks'] = tasks_result[0]['count'] if tasks_result else 0
         
         # Count processing meetings
         processing_query = "SELECT COUNT(*) as count FROM meetings WHERE status = 'processing'"
-        processing_result = db.execute_query(processing_query)
+        processing_result = get_db().execute_query(processing_query)
         metrics['processing_meetings'] = processing_result[0]['count'] if processing_result else 0
         
         # Count completed meetings
         completed_query = "SELECT COUNT(*) as count FROM meetings WHERE status = 'completed'"
-        completed_result = db.execute_query(completed_query)
+        completed_result = get_db().execute_query(completed_query)
         metrics['completed_meetings'] = completed_result[0]['count'] if completed_result else 0
         
         # Count failed meetings
         failed_query = "SELECT COUNT(*) as count FROM meetings WHERE status = 'failed'"
-        failed_result = db.execute_query(failed_query)
+        failed_result = get_db().execute_query(failed_query)
         metrics['failed_meetings'] = failed_result[0]['count'] if failed_result else 0
         
         # Recent activity (last 24 hours)
@@ -235,7 +235,7 @@ def get_database_metrics():
         SELECT COUNT(*) as count FROM meetings 
         WHERE created_at > NOW() - INTERVAL '24 hours'
         """
-        recent_result = db.execute_query(recent_query)
+        recent_result = get_db().execute_query(recent_query)
         metrics['meetings_last_24h'] = recent_result[0]['count'] if recent_result else 0
         
         return metrics
@@ -250,7 +250,7 @@ def get_storage_metrics():
         
         # Get total file size from database
         size_query = "SELECT SUM(file_size) as total_size FROM meetings WHERE file_size IS NOT NULL"
-        size_result = db.execute_query(size_query)
+        size_result = get_db().execute_query(size_query)
         total_size = size_result[0]['total_size'] if size_result and size_result[0]['total_size'] else 0
         
         metrics['total_storage_bytes'] = int(total_size)
@@ -258,7 +258,7 @@ def get_storage_metrics():
         
         # Count files
         files_query = "SELECT COUNT(*) as count FROM meetings WHERE audio_url IS NOT NULL"
-        files_result = db.execute_query(files_query)
+        files_result = get_db().execute_query(files_query)
         metrics['total_files'] = files_result[0]['count'] if files_result else 0
         
         return metrics

@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 
-from config.database import db
+from config.database import get_db
 from middleware.validation import add_security_headers
 def _resolve_db_user_id(raw_user_id: str):
     """Return internal UUID user id. Accepts UUID or Firebase UID string."""
@@ -13,7 +13,7 @@ def _resolve_db_user_id(raw_user_id: str):
         if re.match(uuid_pattern, raw_user_id, re.IGNORECASE):
             return raw_user_id
         # Otherwise treat as firebase_uid and look up users.id
-        row = db.execute_query("SELECT id FROM users WHERE firebase_uid = %s", (raw_user_id,))
+        row = get_db().execute_query("SELECT id FROM users WHERE firebase_uid = %s", (raw_user_id,))
         if row and len(row) > 0 and row[0].get('id'):
             return row[0]['id']
     except Exception:
@@ -123,7 +123,7 @@ def get_meetings():
         LIMIT %s OFFSET %s
         """
 
-        meetings = db.execute_query(list_query, (where_param, limit, offset))
+        meetings = get_db().execute_query(list_query, (where_param, limit, offset))
         print(f"📊 Found {len(meetings) if meetings else 0} meetings for user {raw_user_id}")
         
         # Debug: Print meeting IDs to check format
@@ -137,7 +137,7 @@ def get_meetings():
         FROM meetings m
         WHERE {where_sql}
         """
-        count_result = db.execute_query(count_query, (where_param,))
+        count_result = get_db().execute_query(count_query, (where_param,))
         total_count = count_result[0]['total'] if count_result else 0
         
         # Format response
@@ -206,7 +206,7 @@ def get_meeting_timeline(meeting_id):
         ORDER BY timestamp_minutes ASC
         """
         
-        result = db.execute_query(query, (meeting_id,))
+        result = get_db().execute_query(query, (meeting_id,))
         
         if result is None:
             return jsonify({'error': 'Failed to fetch timeline'}), 500
@@ -257,7 +257,7 @@ def get_meeting(meeting_id):
         GROUP BY m.id
         """
         
-        result = db.execute_query(query, (meeting_id,))
+        result = get_db().execute_query(query, (meeting_id,))
         
         if not result:
             return jsonify({'error': 'Meeting not found'}), 404
@@ -288,7 +288,7 @@ def get_meeting_summary(meeting_id):
     """Get summary for a specific meeting"""
     try:
         query = "SELECT summary, title, created_at FROM meetings WHERE id = %s"
-        result = db.execute_query(query, (meeting_id,))
+        result = get_db().execute_query(query, (meeting_id,))
         
         if not result:
             return jsonify({'error': 'Meeting not found'}), 404
@@ -322,14 +322,14 @@ def delete_meeting(meeting_id):
     try:
         # Check if meeting exists
         meeting_query = "SELECT audio_url FROM meetings WHERE id = %s"
-        meeting_result = db.execute_query(meeting_query, (meeting_id,))
+        meeting_result = get_db().execute_query(meeting_query, (meeting_id,))
         
         if not meeting_result:
             return jsonify({'error': 'Meeting not found'}), 404
         
         # Delete from database (cascading deletes will handle related tables)
         delete_query = "DELETE FROM meetings WHERE id = %s"
-        deleted_count = db.execute_query(delete_query, (meeting_id,))
+        deleted_count = get_db().execute_query(delete_query, (meeting_id,))
         
         if deleted_count > 0:
             # TODO: Delete audio file from storage
@@ -352,7 +352,7 @@ def reprocess_meeting(meeting_id):
     try:
         # Check if meeting exists and has transcript
         meeting_query = "SELECT transcript, title, audio_url FROM meetings WHERE id = %s"
-        meeting_result = db.execute_query(meeting_query, (meeting_id,))
+        meeting_result = get_db().execute_query(meeting_query, (meeting_id,))
         
         if not meeting_result:
             return jsonify({'error': 'Meeting not found'}), 404
@@ -364,14 +364,14 @@ def reprocess_meeting(meeting_id):
         
         # Update meeting status
         update_query = "UPDATE meetings SET status = %s, updated_at = %s WHERE id = %s"
-        db.execute_query(update_query, ('processing', datetime.utcnow(), meeting_id))
+        get_db().execute_query(update_query, ('processing', datetime.utcnow(), meeting_id))
         
         # Clear existing timeline and tasks
-        db.execute_query("DELETE FROM timeline WHERE meeting_id = %s", (meeting_id,))
-        db.execute_query("DELETE FROM tasks WHERE meeting_id = %s", (meeting_id,))
+        get_db().execute_query("DELETE FROM timeline WHERE meeting_id = %s", (meeting_id,))
+        get_db().execute_query("DELETE FROM tasks WHERE meeting_id = %s", (meeting_id,))
         
         # Reset processing status
-        db.execute_query("DELETE FROM processing_status WHERE meeting_id = %s", (meeting_id,))
+        get_db().execute_query("DELETE FROM processing_status WHERE meeting_id = %s", (meeting_id,))
         
         # Start reprocessing (this would typically be done asynchronously)
         # For now, return success message
@@ -409,7 +409,7 @@ def get_meeting_stats():
         FROM meetings m
         WHERE {where_sql}
         """
-        total_result = db.execute_query(total_query, (where_param,))
+        total_result = get_db().execute_query(total_query, (where_param,))
         stats['total_meetings'] = total_result[0]['count'] if total_result else 0
         
         # Meetings by status
@@ -419,7 +419,7 @@ def get_meeting_stats():
         WHERE {where_sql}
         GROUP BY status
         """
-        status_result = db.execute_query(status_query, (where_param,))
+        status_result = get_db().execute_query(status_query, (where_param,))
         stats['by_status'] = {row['status']: row['count'] for row in status_result}
         
         # Total tasks
@@ -429,7 +429,7 @@ def get_meeting_stats():
         JOIN meetings m ON t.meeting_id = m.id 
         WHERE {where_sql}
         """
-        tasks_result = db.execute_query(tasks_query, (where_param,))
+        tasks_result = get_db().execute_query(tasks_query, (where_param,))
         stats['total_tasks'] = tasks_result[0]['count'] if tasks_result else 0
         
         # Tasks by status
@@ -440,7 +440,7 @@ def get_meeting_stats():
         WHERE {where_sql}
         GROUP BY t.status
         """
-        task_status_result = db.execute_query(task_status_query, (where_param,))
+        task_status_result = get_db().execute_query(task_status_query, (where_param,))
         stats['tasks_by_status'] = {row['status']: row['count'] for row in task_status_result}
         
         # Recent activity (last 7 days)
@@ -449,7 +449,7 @@ def get_meeting_stats():
         FROM meetings m
         WHERE {where_sql} AND m.created_at > NOW() - INTERVAL '7 days'
         """
-        recent_result = db.execute_query(recent_query, (where_param,))
+        recent_result = get_db().execute_query(recent_query, (where_param,))
         stats['recent_meetings'] = recent_result[0]['count'] if recent_result else 0
         
         # Total duration
@@ -458,7 +458,7 @@ def get_meeting_stats():
         FROM meetings m
         WHERE {where_sql} AND m.duration IS NOT NULL
         """
-        duration_result = db.execute_query(duration_query, (where_param,))
+        duration_result = get_db().execute_query(duration_query, (where_param,))
         total_duration = duration_result[0]['total_duration'] if duration_result and duration_result[0]['total_duration'] else 0
         stats['total_duration_minutes'] = int(total_duration)
         stats['total_duration_hours'] = round(total_duration / 60, 2)

@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 from middleware.validation import validate_json, add_security_headers
 from services.calendar_sync import calendar_service
-from config.database import db
+from config.database import get_db
 import logging
 
 google_calendar_bp = Blueprint('google_calendar', __name__)
@@ -20,7 +20,7 @@ def test_calendar_access():
         
         # Get user's Google access token
         get_token_query = "SELECT google_access_token, google_refresh_token FROM users WHERE id = %s"
-        token_result = db.execute_query(get_token_query, (user_id,))
+        token_result = get_db().execute_query(get_token_query, (user_id,))
         
         if not token_result or not token_result[0]['google_access_token']:
             return jsonify({
@@ -61,7 +61,7 @@ def sync_tasks_to_calendar():
         JOIN users u ON m.user_id = u.id
         WHERE m.id = %s
         """
-        meeting_result = db.execute_query(meeting_query, (meeting_id,))
+        meeting_result = get_db().execute_query(meeting_query, (meeting_id,))
         
         if not meeting_result:
             return jsonify({'error': 'Meeting not found'}), 404
@@ -111,7 +111,7 @@ def update_calendar_event(event_id):
         
         # Get user's Google access token
         get_token_query = "SELECT google_access_token, google_refresh_token FROM users WHERE id = %s"
-        token_result = db.execute_query(get_token_query, (user_id,))
+        token_result = get_db().execute_query(get_token_query, (user_id,))
         
         if not token_result or not token_result[0]['google_access_token']:
             return jsonify({
@@ -152,7 +152,7 @@ def delete_calendar_event(event_id):
         
         # Get user's Google access token
         get_token_query = "SELECT google_access_token, google_refresh_token FROM users WHERE id = %s"
-        token_result = db.execute_query(get_token_query, (user_id,))
+        token_result = get_db().execute_query(get_token_query, (user_id,))
         
         if not token_result or not token_result[0]['google_access_token']:
             return jsonify({

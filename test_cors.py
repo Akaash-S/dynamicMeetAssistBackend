@@ -9,7 +9,7 @@ def test_cors_headers():
     """Test CORS headers for localhost origins"""
     
     # Test URLs
-    base_url = "http://localhost:5000"
+    base_url = "http://localhost:8000"
     test_origins = [
         "http://localhost:3000",
         "http://localhost:5173", 

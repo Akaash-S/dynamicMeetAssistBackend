@@ -1,10 +1,41 @@
+"""
+CLIENT APP Authentication Routes
+================================
+This module handles authentication for the DYNAMIC MEETING ASSISTANT CLIENT APP ONLY.
+Regular users (role='user') authenticate here using GOOGLE SIGN-IN via Firebase.
+
+AUTHENTICATION METHOD:
+- ✅ Google Sign-In (via Firebase Authentication) - ONLY METHOD
+- ❌ Email/Password - NOT SUPPORTED (use Google Sign-In instead)
+- ❌ Admin Login - Use /api/admin/auth/login instead
+
+IMPORTANT:
+- These routes are for CLIENT APP users only (role='user')
+- All authentication is done through Google Sign-In (Firebase)
+- Admin users MUST use /api/admin/auth/* endpoints (Email + Password)
+- All new users created through these routes get role='user' by default
+- Admin accounts cannot authenticate through these endpoints (403 Forbidden)
+
+Endpoints:
+- POST /api/auth/verify - Verify/create client user (Google Sign-In via Firebase)
+- GET /api/auth/user/<identifier> - Get user profile
+- PUT /api/auth/user/<firebase_uid> - Update user profile
+- PUT /api/auth/user/<firebase_uid>/notifications - Update notification preferences
+- GET /api/auth/user/<firebase_uid>/notifications - Get notification preferences
+- DELETE /api/auth/user/<firebase_uid> - Delete user account
+- POST /api/auth/google-oauth - Google OAuth verification (alternative flow)
+- POST /api/auth/google-calendar/exchange-token - Exchange calendar token
+
+For admin authentication (Email + Password), see: backend/routes/admin_auth.py
+"""
+
 from flask import Blueprint, request, jsonify
 import uuid
 import logging
 import os
 from datetime import datetime
 
-from config.database import db
+from config.database import get_db
 from middleware.validation import validate_json, add_security_headers, RequestValidator
 
 # Set up logger
@@ -16,8 +47,12 @@ auth_bp = Blueprint('auth', __name__)
 @add_security_headers()
 @validate_json('email')
 def verify_user():
-    """Verify user and create/update user record - supports both Firebase and OAuth2"""
-    print('Backend: /verify endpoint hit')
+    """
+    Verify user and create/update user record - CLIENT APP ONLY
+    This endpoint is for regular users (role='user'), not admins
+    Admins should use /api/admin/auth/login instead
+    """
+    print('Backend: /verify endpoint hit (CLIENT APP)')
     try:
         data = request.get_json()
         print(f'Backend: Received data: {data}')
@@ -49,7 +84,7 @@ def verify_user():
         if not force_create:
             # Strategy 1: Look for exact email match first (most reliable)
             email_query = "SELECT * FROM users WHERE email = %s"
-            email_result = db.execute_query(email_query, [email])
+            email_result = get_db().execute_query(email_query, [email])
             
             if email_result:
                 existing_user = email_result
@@ -59,13 +94,13 @@ def verify_user():
                 auth_queries = []
                 
                 if firebase_uid:
-                    firebase_result = db.execute_query("SELECT * FROM users WHERE firebase_uid = %s", [firebase_uid])
+                    firebase_result = get_db().execute_query("SELECT * FROM users WHERE firebase_uid = %s", [firebase_uid])
                     if firebase_result:
                         existing_user = firebase_result
                         print(f'Backend: Found existing user by firebase_uid: {firebase_uid}')
                 
                 if not existing_user and google_oauth_id:
-                    google_result = db.execute_query("SELECT * FROM users WHERE google_oauth_id = %s", [google_oauth_id])
+                    google_result = get_db().execute_query("SELECT * FROM users WHERE google_oauth_id = %s", [google_oauth_id])
                     if google_result:
                         existing_user = google_result
                         print(f'Backend: Found existing user by google_oauth_id: {google_oauth_id}')
@@ -78,6 +113,14 @@ def verify_user():
             # Update existing user
             print('Backend: Existing user found, updating user.')
             user = existing_user[0]
+            
+            # Security: Prevent regular users from accessing admin accounts
+            if user.get('role') == 'admin':
+                return jsonify({
+                    'error': 'Admin accounts must use admin login endpoint',
+                    'message': 'Please use the admin dashboard to log in'
+                }), 403
+            
             update_query = """
             UPDATE users 
             SET email = %s, name = %s, auth_provider = %s, updated_at = %s
@@ -109,7 +152,7 @@ def verify_user():
             update_query += " WHERE id = %s"
             params.append(user['id'])
             
-            db.execute_query(update_query, params)
+            get_db().execute_query(update_query, params)
             print('Backend: User updated successfully.')
             
             return jsonify({
@@ -127,14 +170,14 @@ def verify_user():
                 'is_new_user': False
             }), 200
         else:
-            # Create new user
-            print("✅ No existing user found. Creating new user.")
+            # Create new user - CLIENT APP (role='user' by default)
+            print("✅ No existing user found. Creating new CLIENT user.")
             user_id = str(uuid.uuid4())
             insert_query = """
             INSERT INTO users (id, firebase_uid, google_oauth_id, email, name, auth_provider, 
-                             google_access_token, google_refresh_token, google_token_expires_at, 
-                             google_calendar_enabled, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                             role, google_access_token, google_refresh_token, google_token_expires_at, 
+                             google_calendar_enabled, is_active, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             
             insert_params = (
@@ -144,10 +187,12 @@ def verify_user():
                 email,
                 name or email.split('@')[0],
                 auth_provider,
+                'user',  # CLIENT APP: Always create as regular user, not admin
                 data.get('google_access_token'),
                 data.get('google_refresh_token'),
                 data.get('google_token_expires_at'),
                 data.get('google_calendar_enabled', False),
+                True,  # is_active
                 datetime.utcnow(),
                 datetime.utcnow()
             )
@@ -156,7 +201,7 @@ def verify_user():
             print(f"🔍 INSERT params: {insert_params}")
             
             try:
-                result = db.execute_query(insert_query, insert_params)
+                result = get_db().execute_query(insert_query, insert_params)
                 print(f"✅ User created successfully. Result: {result}")
             except Exception as e:
                 print(f"❌ Error creating user: {e}")
@@ -210,7 +255,7 @@ def get_user(identifier):
         
         for strategy_name, query in lookup_strategies:
             try:
-                result = db.execute_query(query, [identifier])
+                result = get_db().execute_query(query, [identifier])
                 if result and len(result) > 0:
                     user = result[0]
                     found_by = strategy_name
@@ -270,7 +315,7 @@ def update_user(firebase_uid):
         
         # Check if user exists
         check_query = "SELECT id FROM users WHERE firebase_uid = %s"
-        check_result = db.execute_query(check_query, (firebase_uid,))
+        check_result = get_db().execute_query(check_query, (firebase_uid,))
         
         if not check_result:
             return jsonify({'error': 'User not found'}), 404
@@ -306,14 +351,14 @@ def update_user(firebase_uid):
         
         # Execute database update
         try:
-            updated_count = db.execute_query(update_query, params)
+            updated_count = get_db().execute_query(update_query, params)
         except Exception as db_error:
             return jsonify({'error': f'Failed to update user in database: {str(db_error)}'}), 500
         
         if updated_count > 0:
             # Get updated user data from database (single source of truth)
             get_query = "SELECT * FROM users WHERE firebase_uid = %s"
-            updated_user_result = db.execute_query(get_query, (firebase_uid,))
+            updated_user_result = get_db().execute_query(get_query, (firebase_uid,))
             updated_user = updated_user_result[0]
             
             return jsonify({
@@ -365,7 +410,7 @@ def update_notification_preferences(firebase_uid):
         check_query = "SELECT id, name, email FROM users WHERE firebase_uid = %s"
         
         try:
-            check_result = db.execute_query(check_query, (firebase_uid,))
+            check_result = get_db().execute_query(check_query, (firebase_uid,))
         except Exception as db_error:
             return jsonify({
                 'error': 'Database query failed',
@@ -404,7 +449,7 @@ def update_notification_preferences(firebase_uid):
         """
         
         try:
-            db.execute_query(update_query, (
+            get_db().execute_query(update_query, (
                 email_notifications, 
                 in_app_notifications, 
                 datetime.utcnow(), 
@@ -464,7 +509,7 @@ def get_notification_preferences(firebase_uid):
         
         # Check if database is available
         try:
-            db.test_connection()
+            get_db().test_connection()
             print("✅ Database connection test passed")
         except Exception as db_error:
             print(f"❌ Database connection failed: {db_error}")
@@ -491,7 +536,7 @@ def get_notification_preferences(firebase_uid):
         """
         
         try:
-            user_result = db.execute_query(user_query, (firebase_uid,))
+            user_result = get_db().execute_query(user_query, (firebase_uid,))
             print(f"🔍 Database query result: {len(user_result) if user_result else 0} users found")
         except Exception as db_error:
             print(f"❌ Database query failed: {db_error}")
@@ -563,7 +608,7 @@ def delete_user_account(firebase_uid):
         
         # Check if user exists
         check_query = "SELECT id FROM users WHERE firebase_uid = %s"
-        check_result = db.execute_query(check_query, (firebase_uid,))
+        check_result = get_db().execute_query(check_query, (firebase_uid,))
         
         if not check_result:
             return jsonify({'error': 'User not found'}), 404
@@ -573,10 +618,10 @@ def delete_user_account(firebase_uid):
         # Delete user data in order (foreign key constraints)
         try:
             # Delete tasks
-            db.execute_query("DELETE FROM tasks WHERE user_id = %s", (user_id,))
+            get_db().execute_query("DELETE FROM tasks WHERE user_id = %s", (user_id,))
             
             # Delete timeline entries for user's meetings
-            db.execute_query("""
+            get_db().execute_query("""
                 DELETE FROM timeline 
                 WHERE meeting_id IN (
                     SELECT id FROM meetings WHERE user_id = %s
@@ -584,7 +629,7 @@ def delete_user_account(firebase_uid):
             """, (user_id,))
             
             # Delete processing status for user's meetings
-            db.execute_query("""
+            get_db().execute_query("""
                 DELETE FROM processing_status 
                 WHERE meeting_id IN (
                     SELECT id FROM meetings WHERE user_id = %s
@@ -592,10 +637,10 @@ def delete_user_account(firebase_uid):
             """, (user_id,))
             
             # Delete meetings
-            db.execute_query("DELETE FROM meetings WHERE user_id = %s", (user_id,))
+            get_db().execute_query("DELETE FROM meetings WHERE user_id = %s", (user_id,))
             
             # Finally, delete user
-            db.execute_query("DELETE FROM users WHERE firebase_uid = %s", (firebase_uid,))
+            get_db().execute_query("DELETE FROM users WHERE firebase_uid = %s", (firebase_uid,))
             
             return jsonify({
                 'success': True,
@@ -622,7 +667,7 @@ def link_google_account(user_id):
 
         # Check if user exists (by ID, not firebase_uid)
         check_query = "SELECT id FROM users WHERE id = %s"
-        check_result = db.execute_query(check_query, (user_id,))
+        check_result = get_db().execute_query(check_query, (user_id,))
 
         if not check_result:
             return jsonify({'error': 'User not found'}), 404
@@ -634,7 +679,7 @@ def link_google_account(user_id):
         WHERE id = %s
         """
 
-        db.execute_query(update_query, (access_token, refresh_token, datetime.utcnow(), user_id))
+        get_db().execute_query(update_query, (access_token, refresh_token, datetime.utcnow(), user_id))
 
         return jsonify({
             'success': True,
@@ -695,7 +740,7 @@ def exchange_calendar_token():
         WHERE id = %s
         """
         
-        db.execute_query(update_query, (
+        get_db().execute_query(update_query, (
             tokens['access_token'],
             tokens.get('refresh_token'),
             datetime.utcnow(),
@@ -739,14 +784,14 @@ def verify_google_oauth():
         if not force_create:
             # Strategy 1: Look for exact email match first (most reliable)
             email_query = "SELECT * FROM users WHERE email = %s"
-            email_result = db.execute_query(email_query, [email])
+            email_result = get_db().execute_query(email_query, [email])
             
             if email_result:
                 existing_user = email_result
                 print(f'Backend: OAuth - Found existing user by email: {email}')
             elif google_oauth_id:
                 # Strategy 2: Look by google_oauth_id only if no email match
-                google_result = db.execute_query("SELECT * FROM users WHERE google_oauth_id = %s", [google_oauth_id])
+                google_result = get_db().execute_query("SELECT * FROM users WHERE google_oauth_id = %s", [google_oauth_id])
                 if google_result:
                     existing_user = google_result
                     print(f'Backend: OAuth - Found existing user by google_oauth_id: {google_oauth_id}')
@@ -767,7 +812,7 @@ def verify_google_oauth():
             WHERE id = %s
             """
             
-            db.execute_query(update_query, (
+            get_db().execute_query(update_query, (
                 email, name or user['name'], google_oauth_id, access_token,
                 data.get('refresh_token'), data.get('expires_at'),
                 data.get('google_calendar_enabled', True),
@@ -798,7 +843,7 @@ def verify_google_oauth():
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             
-            db.execute_query(insert_query, (
+            get_db().execute_query(insert_query, (
                 user_id, google_oauth_id, email, name or email.split('@')[0], 'google_oauth',
                 access_token, data.get('refresh_token'), data.get('expires_at'),
                 data.get('google_calendar_enabled', True),

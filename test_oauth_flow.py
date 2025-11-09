@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 
 # Configuration
-BASE_URL = "http://localhost:5000"  # Adjust if your backend runs on different port
+BASE_URL = "http://localhost:8000"  # Adjust if your backend runs on different port
 TEST_EMAIL = "test.oauth@example.com"
 TEST_NAME = "OAuth Test User"
 

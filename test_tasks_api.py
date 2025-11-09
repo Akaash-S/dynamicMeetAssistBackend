@@ -34,7 +34,7 @@ def test_tasks_api():
         }
     ]
     
-    base_url = 'http://localhost:5000/api/tasks'
+    base_url = 'http://localhost:8000/api/tasks'
     
     print("Testing Tasks API Endpoint")
     print("=" * 50)

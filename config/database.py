@@ -4,6 +4,9 @@ from psycopg2.extras import RealDictCursor
 import os
 import threading
 from contextlib import contextmanager
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class Database:
     def __init__(self):
@@ -192,8 +195,15 @@ class Database:
             print(f"[ERROR] Database connection test failed: {e}")
             return False
 
-# Global database instance
-db = Database()
+# Global database instance - initialized lazily
+db = None
+
+def get_db():
+    """Get or create the global database instance"""
+    global db
+    if db is None:
+        db = Database()
+    return db
 
 def init_db():
     """Initialize database tables"""
@@ -210,17 +220,22 @@ def init_db():
         google_oauth_id VARCHAR(255) UNIQUE,
         email VARCHAR(255) NOT NULL,
         name VARCHAR(255) NOT NULL,
-        auth_provider VARCHAR(50) DEFAULT 'firebase', -- 'firebase' or 'google_oauth'
+        auth_provider VARCHAR(50) DEFAULT 'firebase', -- 'firebase', 'google_oauth', or 'admin_email'
         google_access_token TEXT,
         google_refresh_token TEXT,
         google_token_expires_at TIMESTAMP,
         email_notifications BOOLEAN DEFAULT TRUE,
         in_app_notifications BOOLEAN DEFAULT TRUE,
         google_calendar_enabled BOOLEAN DEFAULT FALSE,
+        -- Admin-related fields
+        role VARCHAR(50) DEFAULT 'user', -- 'user' or 'admin'
+        password_hash VARCHAR(255), -- For admin email/password authentication
+        last_login_at TIMESTAMP,
+        is_active BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT users_auth_check CHECK (
-            (firebase_uid IS NOT NULL) OR (google_oauth_id IS NOT NULL)
+            (firebase_uid IS NOT NULL) OR (google_oauth_id IS NOT NULL) OR (password_hash IS NOT NULL)
         )
     );
     """
@@ -304,14 +319,85 @@ def init_db():
     );
     """
     
+    # Admin Issues table for support ticket tracking
+    create_admin_issues_table = """
+    CREATE TABLE IF NOT EXISTS admin_issues (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        status VARCHAR(50) DEFAULT 'open', -- 'open', 'in_progress', 'resolved', 'closed'
+        priority VARCHAR(20) DEFAULT 'medium', -- 'low', 'medium', 'high', 'urgent'
+        category VARCHAR(100), -- 'technical', 'billing', 'feature_request', 'bug_report'
+        assigned_to VARCHAR(255), -- Admin email who is handling the issue
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        resolved_at TIMESTAMP,
+        resolved_by VARCHAR(255) -- Admin email who resolved the issue
+    );
+    """
+    
+    # Admin Payments table for payment tracking
+    create_admin_payments_table = """
+    CREATE TABLE IF NOT EXISTS admin_payments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        amount DECIMAL(10,2) NOT NULL,
+        currency VARCHAR(3) DEFAULT 'USD',
+        status VARCHAR(50) DEFAULT 'pending', -- 'pending', 'completed', 'failed', 'refunded'
+        payment_method VARCHAR(50), -- 'credit_card', 'paypal', 'stripe', 'bank_transfer'
+        transaction_id VARCHAR(255),
+        stripe_payment_intent_id VARCHAR(255),
+        description VARCHAR(255),
+        metadata JSONB, -- Additional payment metadata
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """
+    
+    # Admin Notifications table for system-wide notifications
+    create_admin_notifications_table = """
+    CREATE TABLE IF NOT EXISTS admin_notifications (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        message TEXT NOT NULL,
+        type VARCHAR(50) DEFAULT 'system', -- 'system', 'user', 'payment', 'issue'
+        priority VARCHAR(20) DEFAULT 'normal', -- 'low', 'normal', 'high', 'urgent'
+        target_user_id UUID REFERENCES users(id) ON DELETE CASCADE, -- NULL for broadcast notifications
+        is_read BOOLEAN DEFAULT FALSE,
+        created_by VARCHAR(255), -- Admin email who created the notification
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """
+    
+    # Admin Logs table for audit trail
+    create_admin_logs_table = """
+    CREATE TABLE IF NOT EXISTS admin_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        admin_email VARCHAR(255) NOT NULL,
+        action VARCHAR(100) NOT NULL, -- 'CREATE_USER', 'DELETE_ISSUE', 'PROCESS_REFUND', etc.
+        resource_type VARCHAR(50), -- 'user', 'issue', 'payment', 'notification'
+        resource_id VARCHAR(255), -- ID of the affected resource
+        details TEXT, -- Additional details about the action
+        ip_address VARCHAR(45), -- IPv4 or IPv6 address
+        user_agent TEXT, -- Browser/client information
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """
+    
     try:
-        db.execute_query(create_extensions)
-        db.execute_query(create_users_table)
-        db.execute_query(create_meetings_table)
-        db.execute_query(create_timeline_table)
-        db.execute_query(create_tasks_table)
-        db.execute_query(create_processing_status_table)
-        db.execute_query(create_notifications_table)
+        get_db().execute_query(create_extensions)
+        get_db().execute_query(create_users_table)
+        get_db().execute_query(create_meetings_table)
+        get_db().execute_query(create_timeline_table)
+        get_db().execute_query(create_tasks_table)
+        get_db().execute_query(create_processing_status_table)
+        get_db().execute_query(create_notifications_table)
+        
+        # Create admin-specific tables
+        get_db().execute_query(create_admin_issues_table)
+        get_db().execute_query(create_admin_payments_table)
+        get_db().execute_query(create_admin_notifications_table)
+        get_db().execute_query(create_admin_logs_table)
         
         # Run migration for existing users
         migrate_existing_users()
@@ -390,7 +476,7 @@ def migrate_existing_users():
         ]
         
         for query in migration_queries:
-            db.execute_query(query)
+            get_db().execute_query(query)
         
         print("[SUCCESS] User table migration completed")
         

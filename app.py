@@ -41,10 +41,10 @@ def create_app():
     # Add development origins only in development mode
     if flask_env == 'development':
         development_origins = [
+            'http://localhost:5173',
+            'http://localhost:5174', 
             'http://localhost:3000',
-            'http://localhost:5173', 
-            'http://localhost:8080',
-            'http://127.0.0.1:3000',
+            'http://127.0.0.1:8080',
             'http://127.0.0.1:5173',
             'http://127.0.0.1:8080'
         ]
@@ -193,16 +193,33 @@ def create_app():
                 response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
                 return response
             
+            # Check database connection
+            db_status = "healthy"
+            try:
+                from config.database import get_db
+                get_db().execute_query("SELECT 1")
+            except Exception as db_error:
+                db_status = "unhealthy"
+                print(f"Database health check failed: {db_error}")
+            
             # Always return 200 for health checks
             return jsonify({
+                "success": True,
                 "status": "ok",
                 "timestamp": datetime.utcnow().isoformat(),
-                "message": "Backend is running"
+                "message": "Backend is running",
+                "service": "Dynamic Meeting Assistant API",
+                "version": "1.0.0",
+                "components": {
+                    "database": db_status,
+                    "api": "healthy"
+                }
             }), 200
             
         except Exception as e:
             # Even if there's an error, return 200 to prevent frontend issues
             return jsonify({
+                "success": False,
                 "status": "error",
                 "timestamp": datetime.utcnow().isoformat(),
                 "error": str(e),
@@ -216,6 +233,19 @@ def create_app():
     app.register_blueprint(upload_bp, url_prefix='/api/upload')
     app.register_blueprint(health_bp, url_prefix='/api/health/detailed')
     app.register_blueprint(google_calendar_bp, url_prefix='/api/calendar')
+    
+    # Register admin blueprints
+    from routes.admin_auth import admin_auth_bp
+    from routes.admin_users import admin_users_bp
+    from routes.admin_issues import admin_issues_bp
+    from routes.admin_payments import admin_payments_bp
+    from routes.admin_notifications import admin_notifications_bp
+    
+    app.register_blueprint(admin_auth_bp, url_prefix='/api/admin/auth')
+    app.register_blueprint(admin_users_bp, url_prefix='/api/admin/users')
+    app.register_blueprint(admin_issues_bp, url_prefix='/api/admin/issues')
+    app.register_blueprint(admin_payments_bp, url_prefix='/api/admin/payments')
+    app.register_blueprint(admin_notifications_bp, url_prefix='/api/admin/notifications')
     
     # Register CORS debug routes (development only)
     if flask_env == 'development':
@@ -260,11 +290,46 @@ def create_app():
     return app
 
 if __name__ == '__main__':
+    # Validate configuration before starting
+    from utils.config_validator import ConfigValidator
+    
+    print("\n" + "=" * 60)
+    print("🚀 Dynamic Meeting Assistant Backend")
+    print("=" * 60)
+    
+    # Run configuration validation
+    config_valid = ConfigValidator.print_validation_report()
+    
+    if not config_valid:
+        print("\n⚠️  WARNING: Critical configuration issues detected!")
+        print("   The application may not function correctly.")
+        print("   Please review the warnings above.\n")
+    
+    # Print configuration summary
+    config_summary = ConfigValidator.get_config_summary()
+    print("\n📋 Configuration Summary:")
+    print(f"   Environment: {config_summary['environment']}")
+    print(f"   Port: {config_summary['port']}")
+    print(f"   Database: {'✅' if config_summary['database_configured'] else '❌'}")
+    print(f"   Storage: {'✅' if config_summary['storage_configured'] else '❌'}")
+    print(f"   AI Processing: {'✅' if config_summary['ai_configured'] else '❌'}")
+    print(f"   Transcription: {'✅' if config_summary['transcription_configured'] else '❌'}")
+    print(f"   Calendar Sync: {'✅' if config_summary['calendar_configured'] else '❌'}")
+    print(f"   Email: {'✅' if config_summary['email_configured'] else '❌'}")
+    print(f"   Admin: {'✅' if config_summary['admin_configured'] else '❌'}")
+    print("=" * 60 + "\n")
+    
     app = create_app()
     # Get port from environment variable (for Render deployment) or default to 5000
     port = int(os.environ.get('PORT', 5000))
     # Use debug=False for production, debug=True for development
     debug_mode = os.environ.get('FLASK_ENV') == 'development'
+    
+    print(f"🌐 Starting server on http://0.0.0.0:{port}")
+    print(f"   Mode: {'Development' if debug_mode else 'Production'}")
+    print(f"   Admin Dashboard: http://localhost:{port}/api/admin/auth/login")
+    print(f"   Health Check: http://localhost:{port}/api/health\n")
+    
     app.run(debug=debug_mode, host='0.0.0.0', port=port)
 
 # For deployment (Gunicorn will use this)

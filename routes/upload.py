@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from werkzeug.utils import secure_filename
 
-from config.database import db
+from config.database import get_db
 from config.storage import storage
 from services.transcription import transcription_service
 from services.ai_processor import ai_processor
@@ -155,7 +155,7 @@ def upload_audio():
         
         # Test database connection before proceeding
         try:
-            if not db.test_connection():
+            if not get_db().test_connection():
                 print("❌ Database connection test failed")
                 return jsonify({'error': 'Database connection failed'}), 500
         except Exception as db_test_error:
@@ -171,7 +171,7 @@ def upload_audio():
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             """
             
-            db.execute_query(insert_meeting_query, (
+            get_db().execute_query(insert_meeting_query, (
                 meeting_id,
                 user_id,  # Use database user ID directly
                 meeting_title,
@@ -196,7 +196,7 @@ def upload_audio():
                 INSERT INTO processing_status (meeting_id, step, status, progress)
                 VALUES (%s, %s, %s, %s)
                 """
-                db.execute_query(insert_status_query, (meeting_id, step, 'pending', 0))
+                get_db().execute_query(insert_status_query, (meeting_id, step, 'pending', 0))
                 
             print(f"✅ Processing status records created for meeting: {meeting_id}")
             
@@ -215,7 +215,7 @@ def upload_audio():
             # Update meeting status to failed
             try:
                 update_meeting_query = "UPDATE meetings SET status = %s WHERE id = %s"
-                db.execute_query(update_meeting_query, ('failed', meeting_id))
+                get_db().execute_query(update_meeting_query, ('failed', meeting_id))
             except Exception as update_error:
                 print(f"❌ Failed to update meeting status to failed: {update_error}")
         
@@ -246,7 +246,7 @@ def process_meeting_pipeline(meeting_id: str, audio_url: str, meeting_title: str
             completed_at = CASE WHEN %s = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END
         WHERE meeting_id = %s AND step = %s
         """
-        db.execute_query(update_query, (status, progress, error, status, meeting_id, step))
+        get_db().execute_query(update_query, (status, progress, error, status, meeting_id, step))
     
     try:
         # Step 1: Transcription
@@ -267,7 +267,7 @@ def process_meeting_pipeline(meeting_id: str, audio_url: str, meeting_title: str
         UPDATE meetings SET transcript = %s, duration = %s, updated_at = %s 
         WHERE id = %s
         """
-        db.execute_query(update_meeting_query, (transcript, duration, datetime.utcnow(), meeting_id))
+        get_db().execute_query(update_meeting_query, (transcript, duration, datetime.utcnow(), meeting_id))
         
         update_processing_status('transcription', 'completed', 100)
         print(f"✅ Transcription completed for meeting {meeting_id}")
@@ -291,7 +291,7 @@ def process_meeting_pipeline(meeting_id: str, audio_url: str, meeting_title: str
                 INSERT INTO timeline (meeting_id, timestamp_minutes, event_type, title, content, participants)
                 VALUES (%s, %s, %s, %s, %s, %s)
                 """
-                db.execute_query(insert_timeline_query, (
+                get_db().execute_query(insert_timeline_query, (
                     meeting_id,
                     entry.get('timestamp_minutes', 0),
                     entry.get('event_type', 'discussion'),
@@ -338,10 +338,10 @@ def process_meeting_pipeline(meeting_id: str, audio_url: str, meeting_title: str
                 
                 # Get user_id from meeting
                 get_user_query = "SELECT user_id FROM meetings WHERE id = %s"
-                user_result = db.execute_query(get_user_query, (meeting_id,))
+                user_result = get_db().execute_query(get_user_query, (meeting_id,))
                 user_id = user_result[0]['user_id'] if user_result else None
                 
-                db.execute_query(insert_task_query, (
+                get_db().execute_query(insert_task_query, (
                     task_id,
                     meeting_id,
                     user_id,
@@ -364,13 +364,13 @@ def process_meeting_pipeline(meeting_id: str, audio_url: str, meeting_title: str
         if tasks_data.get('tasks'):
             # Get user_id from meeting
             get_user_query = "SELECT user_id FROM meetings WHERE id = %s"
-            user_result = db.execute_query(get_user_query, (meeting_id,))
+            user_result = get_db().execute_query(get_user_query, (meeting_id,))
             user_id = user_result[0]['user_id'] if user_result else None
 
             if user_id:
                 # Get user's Google access token and refresh token
                 get_token_query = "SELECT google_access_token, google_refresh_token FROM users WHERE id = %s"
-                token_result = db.execute_query(get_token_query, (user_id,))
+                token_result = get_db().execute_query(get_token_query, (user_id,))
                 
                 if token_result and token_result[0]['google_access_token']:
                     access_token = token_result[0]['google_access_token']
@@ -401,7 +401,7 @@ def process_meeting_pipeline(meeting_id: str, audio_url: str, meeting_title: str
                                 UPDATE tasks SET calendar_event_id = %s 
                                 WHERE title = %s AND meeting_id = %s
                                 """
-                                db.execute_query(update_task_query, (
+                                get_db().execute_query(update_task_query, (
                                     event['event_id'], 
                                     event['task_title'], 
                                     meeting_id
@@ -430,11 +430,11 @@ def process_meeting_pipeline(meeting_id: str, audio_url: str, meeting_title: str
         if summary_result['success']:
             summary_text = str(summary_result['data'])
             update_summary_query = "UPDATE meetings SET summary = %s WHERE id = %s"
-            db.execute_query(update_summary_query, (summary_text, meeting_id))
+            get_db().execute_query(update_summary_query, (summary_text, meeting_id))
         
         # Update overall meeting status
         update_meeting_query = "UPDATE meetings SET status = %s, updated_at = %s WHERE id = %s"
-        db.execute_query(update_meeting_query, ('completed', datetime.utcnow(), meeting_id))
+        get_db().execute_query(update_meeting_query, ('completed', datetime.utcnow(), meeting_id))
         
         print(f"🎉 Complete processing pipeline finished for meeting {meeting_id}")
         
@@ -450,7 +450,7 @@ def process_meeting_pipeline(meeting_id: str, audio_url: str, meeting_title: str
         print(f"❌ Pipeline error for meeting {meeting_id}: {e}")
         # Update meeting status to failed
         update_meeting_query = "UPDATE meetings SET status = %s, updated_at = %s WHERE id = %s"
-        db.execute_query(update_meeting_query, ('failed', datetime.utcnow(), meeting_id))
+        get_db().execute_query(update_meeting_query, ('failed', datetime.utcnow(), meeting_id))
 
 @upload_bp.route('/status/<meeting_id>', methods=['GET', 'OPTIONS'])
 @add_security_headers()
@@ -474,7 +474,7 @@ def get_processing_status(meeting_id):
         
         # Get meeting info
         meeting_query = "SELECT * FROM meetings WHERE id = %s"
-        meeting_result = db.execute_query(meeting_query, (meeting_id,))
+        meeting_result = get_db().execute_query(meeting_query, (meeting_id,))
         
         if not meeting_result:
             print(f"❌ Meeting not found: {meeting_id}")
@@ -488,7 +488,7 @@ def get_processing_status(meeting_id):
         
         # Get processing status
         status_query = "SELECT * FROM processing_status WHERE meeting_id = %s ORDER BY started_at"
-        status_result = db.execute_query(status_query, (meeting_id,))
+        status_result = get_db().execute_query(status_query, (meeting_id,))
         
         print(f"✅ Found meeting: {meeting['title']} (status: {meeting['status']})")
         print(f"✅ Found {len(status_result) if status_result else 0} processing steps")
@@ -527,7 +527,7 @@ def list_recent_meetings():
         ORDER BY created_at DESC 
         LIMIT 10
         """
-        meetings = db.execute_query(query)
+        meetings = get_db().execute_query(query)
         
         print(f"📋 Found {len(meetings) if meetings else 0} recent meetings")
         
@@ -560,7 +560,7 @@ def send_meeting_email_notification(meeting_id: str):
         JOIN users u ON m.user_id = u.id 
         WHERE m.id = %s
         """
-        meeting_result = db.execute_query(meeting_query, (meeting_id,))
+        meeting_result = get_db().execute_query(meeting_query, (meeting_id,))
         
         if not meeting_result:
             print(f"❌ Meeting {meeting_id} not found for email notification")
@@ -582,7 +582,7 @@ def send_meeting_email_notification(meeting_id: str):
         WHERE meeting_id = %s 
         ORDER BY timestamp_minutes ASC
         """
-        timeline_result = db.execute_query(timeline_query, (meeting_id,))
+        timeline_result = get_db().execute_query(timeline_query, (meeting_id,))
         timeline_data = timeline_result or []
         
         # Get tasks data
@@ -591,7 +591,7 @@ def send_meeting_email_notification(meeting_id: str):
         WHERE meeting_id = %s 
         ORDER BY priority DESC, created_at ASC
         """
-        tasks_result = db.execute_query(tasks_query, (meeting_id,))
+        tasks_result = get_db().execute_query(tasks_query, (meeting_id,))
         tasks_data = tasks_result or []
         
         # Convert data to proper format for email

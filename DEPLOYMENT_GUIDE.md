@@ -76,7 +76,7 @@ Click "Create Web Service" to start deployment.
   - `http://localhost:3000` (for development)
 - **Authorized Redirect URIs**:
   - `https://your-backend-domain.onrender.com/api/auth/google/callback`
-  - `http://localhost:5000/api/auth/google/callback` (for development)
+  - `http://localhost:8000/api/auth/google/callback` (for development)
 
 ### 3. Environment Variables
 Set these in Render:

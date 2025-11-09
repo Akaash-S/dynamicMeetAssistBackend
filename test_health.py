@@ -9,7 +9,7 @@ def test_health_endpoint():
     """Test the health endpoint"""
     try:
         # Test health endpoint
-        response = requests.get('http://localhost:5000/api/health')
+        response = requests.get('http://localhost:8000/api/health')
         print(f"Health endpoint status: {response.status_code}")
         print(f"Health endpoint response: {response.json()}")
         
@@ -26,7 +26,7 @@ def test_notifications_endpoint():
     try:
         # Test with a dummy Firebase UID
         test_uid = "test_firebase_uid_123"
-        response = requests.get(f'http://localhost:5000/api/auth/user/{test_uid}/notifications')
+        response = requests.get(f'http://localhost:8000/api/auth/user/{test_uid}/notifications')
         print(f"Notifications endpoint status: {response.status_code}")
         print(f"Notifications endpoint response: {response.json()}")
         

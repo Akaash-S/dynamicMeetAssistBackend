@@ -3,7 +3,7 @@ from datetime import datetime
 import logging
 import traceback
 
-from config.database import db
+from config.database import get_db
 def _resolve_db_user_id(raw_user_id: str):
     if not raw_user_id:
         return None
@@ -12,7 +12,7 @@ def _resolve_db_user_id(raw_user_id: str):
         uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
         if re.match(uuid_pattern, raw_user_id, re.IGNORECASE):
             return raw_user_id
-        row = db.execute_query("SELECT id FROM users WHERE firebase_uid = %s", (raw_user_id,))
+        row = get_db().execute_query("SELECT id FROM users WHERE firebase_uid = %s", (raw_user_id,))
         if row and len(row) > 0 and row[0].get('id'):
             return row[0]['id']
     except Exception:
@@ -77,7 +77,7 @@ def get_tasks():
         query += " ORDER BY t.deadline ASC NULLS LAST, t.created_at DESC"
         
         logger.info(f"🔍 Executing query with params: {params}")
-        tasks = db.execute_query(query, params)
+        tasks = get_db().execute_query(query, params)
         logger.info(f"✅ Found {len(tasks) if tasks else 0} tasks")
         
         # Format tasks
@@ -128,7 +128,7 @@ def get_task(task_id):
         WHERE t.id = %s
         """
         
-        result = db.execute_query(query, (task_id,))
+        result = get_db().execute_query(query, (task_id,))
         
         if not result:
             return jsonify({'error': 'Task not found'}), 404
@@ -169,7 +169,7 @@ def update_task_status(task_id):
         
         # Check if task exists
         check_query = "SELECT id FROM tasks WHERE id = %s"
-        check_result = db.execute_query(check_query, (task_id,))
+        check_result = get_db().execute_query(check_query, (task_id,))
         
         if not check_result:
             return jsonify({'error': 'Task not found'}), 404
@@ -181,7 +181,7 @@ def update_task_status(task_id):
         WHERE id = %s
         """
         
-        updated_count = db.execute_query(update_query, (new_status, datetime.utcnow(), task_id))
+        updated_count = get_db().execute_query(update_query, (new_status, datetime.utcnow(), task_id))
         
         if updated_count > 0:
             # Update calendar event if exists
@@ -208,7 +208,7 @@ def update_task(task_id):
         
         # Check if task exists
         check_query = "SELECT * FROM tasks WHERE id = %s"
-        check_result = db.execute_query(check_query, (task_id,))
+        check_result = get_db().execute_query(check_query, (task_id,))
         
         if not check_result:
             return jsonify({'error': 'Task not found'}), 404
@@ -273,11 +273,11 @@ def update_task(task_id):
         WHERE id = %s
         """
         
-        updated_count = db.execute_query(update_query, params)
+        updated_count = get_db().execute_query(update_query, params)
         
         if updated_count > 0:
             # Get updated task
-            updated_task_result = db.execute_query(check_query, (task_id,))
+            updated_task_result = get_db().execute_query(check_query, (task_id,))
             updated_task = updated_task_result[0]
             
             return jsonify({
@@ -306,14 +306,14 @@ def delete_task(task_id):
     try:
         # Check if task exists
         check_query = "SELECT id FROM tasks WHERE id = %s"
-        check_result = db.execute_query(check_query, (task_id,))
+        check_result = get_db().execute_query(check_query, (task_id,))
         
         if not check_result:
             return jsonify({'error': 'Task not found'}), 404
         
         # Delete task
         delete_query = "DELETE FROM tasks WHERE id = %s"
-        deleted_count = db.execute_query(delete_query, (task_id,))
+        deleted_count = get_db().execute_query(delete_query, (task_id,))
         
         if deleted_count > 0:
             # Delete calendar event if exists
@@ -361,7 +361,7 @@ def get_upcoming_tasks():
         ORDER BY t.deadline ASC
         """
         
-        tasks = db.execute_query(query, (where_param, days_ahead))
+        tasks = get_db().execute_query(query, (where_param, days_ahead))
         
         # Format tasks
         formatted_tasks = []
@@ -419,7 +419,7 @@ def get_task_stats():
         FROM tasks t
         WHERE {where_sql}
         """
-        total_result = db.execute_query(total_query, (where_param,))
+        total_result = get_db().execute_query(total_query, (where_param,))
         stats['total_tasks'] = int(total_result[0]['count']) if total_result else 0
         
         # Tasks by status
@@ -429,7 +429,7 @@ def get_task_stats():
         WHERE {where_sql}
         GROUP BY t.status
         """
-        status_result = db.execute_query(status_query, (where_param,))
+        status_result = get_db().execute_query(status_query, (where_param,))
         stats['by_status'] = {row['status']: int(row['count']) for row in (status_result or [])}
         
         # Tasks by priority
@@ -439,7 +439,7 @@ def get_task_stats():
         WHERE {where_sql}
         GROUP BY t.priority
         """
-        priority_result = db.execute_query(priority_query, (where_param,))
+        priority_result = get_db().execute_query(priority_query, (where_param,))
         stats['by_priority'] = {row['priority']: int(row['count']) for row in (priority_result or [])}
         
         # Overdue tasks
@@ -451,7 +451,7 @@ def get_task_stats():
         AND t.deadline < NOW() 
         AND t.status != 'completed'
         """
-        overdue_result = db.execute_query(overdue_query, (where_param,))
+        overdue_result = get_db().execute_query(overdue_query, (where_param,))
         stats['overdue_tasks'] = int(overdue_result[0]['count']) if overdue_result else 0
         
         # Due this week
@@ -463,7 +463,7 @@ def get_task_stats():
         AND t.deadline BETWEEN NOW() AND NOW() + INTERVAL '7 days'
         AND t.status != 'completed'
         """
-        week_result = db.execute_query(week_query, (where_param,))
+        week_result = get_db().execute_query(week_query, (where_param,))
         stats['due_this_week'] = int(week_result[0]['count']) if week_result else 0
         
         # Completion rate

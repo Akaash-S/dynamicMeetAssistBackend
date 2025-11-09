@@ -18,7 +18,7 @@ def test_firebase_uid():
     print(f"UID Length: {len(firebase_uid)}")
     print(f"UID Format: {'Valid Firebase format' if len(firebase_uid) == 28 else 'Invalid format'}")
     
-    base_url = 'http://localhost:5000/api/tasks'
+    base_url = 'http://localhost:8000/api/tasks'
     
     try:
         print(f"\nTesting API call with Firebase UID...")
