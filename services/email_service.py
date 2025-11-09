@@ -1,354 +1,585 @@
 """
-Email Service for AI Meeting Assistant
-Handles sending meeting summaries, timelines, and task notifications to users
+Email Service for Dynamic Meeting Assistant
+Handles all email notifications including:
+- Meeting transcription completion
+- Task assignments and reminders
+- Feature updates and announcements
+- Calendar sync notifications
 """
 
 import os
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime
-from typing import List, Dict, Any, Optional
-from jinja2 import Template
+from email.mime.base import MIMEBase
+from email import encoders
+from datetime import datetime, timedelta
+from typing import List, Dict, Optional
 import logging
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 class EmailService:
     def __init__(self):
         self.smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
-        self.smtp_port = int(os.getenv('SMTP_PORT', '587'))
+        self.smtp_port = int(os.getenv('SMTP_PORT', 587))
         self.email_address = os.getenv('EMAIL_ADDRESS')
         self.email_password = os.getenv('EMAIL_PASSWORD')
         self.from_name = os.getenv('FROM_NAME', 'AI Meeting Assistant')
         
         if not self.email_address or not self.email_password:
             logger.warning("Email credentials not configured. Email notifications will be disabled.")
-            self.enabled = False
-        else:
-            self.enabled = True
-            logger.info("Email service initialized successfully")
-
-    def send_meeting_summary_email(self, 
-                                 user_email: str, 
-                                 user_name: str,
-                                 meeting_data: Dict[str, Any],
-                                 timeline_data: List[Dict[str, Any]],
-                                 tasks_data: List[Dict[str, Any]]) -> bool:
-        """
-        Send a comprehensive meeting summary email to the user
-        """
-        if not self.enabled:
-            logger.warning("Email service not enabled. Skipping email notification.")
-            return False
-
-        try:
-            # Create email message
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = f"Meeting Summary: {meeting_data.get('title', 'Untitled Meeting')}"
-            msg['From'] = f"{self.from_name} <{self.email_address}>"
-            msg['To'] = user_email
-
-            # Generate HTML content
-            html_content = self._generate_meeting_summary_html(
-                user_name, meeting_data, timeline_data, tasks_data
-            )
-            
-            # Generate plain text content
-            text_content = self._generate_meeting_summary_text(
-                user_name, meeting_data, timeline_data, tasks_data
-            )
-
-            # Attach both HTML and text versions
+    
+    def _create_message(self, to_email: str, subject: str, html_content: str, text_content: str = None) -> MIMEMultipart:
+        """Create email message with HTML and text alternatives"""
+        message = MIMEMultipart('alternative')
+        message['From'] = f"{self.from_name} <{self.email_address}>"
+        message['To'] = to_email
+        message['Subject'] = subject
+        
+        # Add text version (fallback)
+        if text_content:
             text_part = MIMEText(text_content, 'plain')
-            html_part = MIMEText(html_content, 'html')
-            
-            msg.attach(text_part)
-            msg.attach(html_part)
-
-            # Send email
-            return self._send_email(msg)
-
-        except Exception as e:
-            logger.error(f"Failed to send meeting summary email: {str(e)}")
-            return False
-
-    def send_task_reminder_email(self, 
-                               user_email: str, 
-                               user_name: str,
-                               tasks: List[Dict[str, Any]]) -> bool:
-        """
-        Send task reminder email to user
-        """
-        if not self.enabled:
-            logger.warning("Email service not enabled. Skipping task reminder.")
-            return False
-
+            message.attach(text_part)
+        
+        # Add HTML version
+        html_part = MIMEText(html_content, 'html')
+        message.attach(html_part)
+        
+        return message
+    
+    def _send_email(self, message: MIMEMultipart) -> bool:
+        """Send email via SMTP"""
         try:
-            # Create email message
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = f"Task Reminders - {len(tasks)} pending tasks"
-            msg['From'] = f"{self.from_name} <{self.email_address}>"
-            msg['To'] = user_email
-
-            # Generate content
-            html_content = self._generate_task_reminder_html(user_name, tasks)
-            text_content = self._generate_task_reminder_text(user_name, tasks)
-
-            # Attach both versions
-            text_part = MIMEText(text_content, 'plain')
-            html_part = MIMEText(html_content, 'html')
+            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+                server.starttls()
+                server.login(self.email_address, self.email_password)
+                server.send_message(message)
             
-            msg.attach(text_part)
-            msg.attach(html_part)
-
-            # Send email
-            return self._send_email(msg)
-
-        except Exception as e:
-            logger.error(f"Failed to send task reminder email: {str(e)}")
-            return False
-
-    def _send_email(self, msg: MIMEMultipart) -> bool:
-        """
-        Send email using SMTP
-        """
-        try:
-            # Create SMTP session
-            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-            server.starttls()  # Enable TLS encryption
-            server.login(self.email_address, self.email_password)
-            
-            # Send email
-            text = msg.as_string()
-            server.sendmail(self.email_address, msg['To'], text)
-            server.quit()
-            
-            logger.info(f"Email sent successfully to {msg['To']}")
+            logger.info(f"Email sent successfully to {message['To']}")
             return True
-
         except Exception as e:
-            logger.error(f"Failed to send email: {str(e)}")
+            logger.error(f"Failed to send email: {e}")
             return False
-
-    def _generate_meeting_summary_html(self, 
-                                     user_name: str,
-                                     meeting_data: Dict[str, Any],
-                                     timeline_data: List[Dict[str, Any]],
-                                     tasks_data: List[Dict[str, Any]]) -> str:
+    
+    def send_meeting_processed_notification(
+        self,
+        user_email: str,
+        user_name: str,
+        meeting_title: str,
+        meeting_id: str,
+        transcription_summary: str,
+        timeline_count: int,
+        tasks_count: int,
+        meeting_duration: int,
+        dashboard_url: str
+    ) -> bool:
         """
-        Generate HTML email content for meeting summary
+        Send notification when meeting transcription is complete
+        
+        Args:
+            user_email: Recipient email
+            user_name: User's name
+            meeting_title: Title of the meeting
+            meeting_id: Meeting ID for linking
+            transcription_summary: Brief summary of transcription
+            timeline_count: Number of timeline events
+            tasks_count: Number of tasks extracted
+            meeting_duration: Duration in minutes
+            dashboard_url: URL to view meeting details
         """
-        html_template = """
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Meeting Summary</title>
-    <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 20px; }
-        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; text-align: center; margin-bottom: 30px; }
-        .section { background: #f8f9fa; padding: 25px; margin-bottom: 25px; border-radius: 8px; border-left: 4px solid #667eea; }
-        .section h2 { color: #667eea; margin-top: 0; font-size: 1.4em; }
-        .timeline-item { background: white; padding: 15px; margin-bottom: 15px; border-radius: 6px; border-left: 3px solid #28a745; }
-        .timeline-time { font-weight: bold; color: #28a745; font-size: 0.9em; }
-        .timeline-title { font-weight: bold; margin: 5px 0; color: #333; }
-        .timeline-content { color: #666; }
-        .task-item { background: white; padding: 15px; margin-bottom: 10px; border-radius: 6px; border-left: 3px solid #ffc107; }
-        .task-priority { display: inline-block; padding: 3px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold; }
-        .priority-high { background: #dc3545; color: white; }
-        .priority-medium { background: #ffc107; color: #333; }
-        .priority-low { background: #28a745; color: white; }
-        .task-status { display: inline-block; padding: 3px 8px; border-radius: 12px; font-size: 0.8em; margin-left: 10px; }
-        .status-pending { background: #6c757d; color: white; }
-        .status-in_progress { background: #007bff; color: white; }
-        .status-completed { background: #28a745; color: white; }
-        .meeting-info { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
-        .info-card { background: white; padding: 15px; border-radius: 6px; text-align: center; }
-        .info-number { font-size: 2em; font-weight: bold; color: #667eea; }
-        .info-label { color: #666; font-size: 0.9em; }
-        .footer { text-align: center; margin-top: 40px; padding: 20px; color: #666; font-size: 0.9em; }
-        .participants { color: #666; font-size: 0.9em; }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>🤖 AI Meeting Assistant</h1>
-        <h2>Meeting Summary Report</h2>
-        <p>Hello {{ user_name }}! Here's your comprehensive meeting summary.</p>
-    </div>
-
-    <div class="section">
-        <h2>📋 Meeting Overview</h2>
-        <h3>{{ meeting_title }}</h3>
-        <div class="meeting-info">
-            <div class="info-card">
-                <div class="info-number">{{ duration_minutes }}</div>
-                <div class="info-label">Minutes</div>
-            </div>
-            <div class="info-card">
-                <div class="info-number">{{ timeline_count }}</div>
-                <div class="info-label">Timeline Events</div>
-            </div>
-            <div class="info-card">
-                <div class="info-number">{{ task_count }}</div>
-                <div class="info-label">Tasks Created</div>
-            </div>
-        </div>
-        <p><strong>Date:</strong> {{ meeting_date }}</p>
-        <p><strong>Status:</strong> <span style="color: #28a745;">✅ Processed Successfully</span></p>
-    </div>
-
-    {% if timeline_data %}
-    <div class="section">
-        <h2>⏰ Minute-by-Minute Timeline</h2>
-        {% for item in timeline_data %}
-        <div class="timeline-item">
-            <div class="timeline-time">{{ item.timestamp }} ({{ item.timestamp_minutes }} min)</div>
-            <div class="timeline-title">{{ item.title }}</div>
-            <div class="timeline-content">{{ item.content }}</div>
-            {% if item.participants %}
-            <div class="participants">👥 Participants: {{ item.participants | join(', ') }}</div>
-            {% endif %}
-        </div>
-        {% endfor %}
-    </div>
-    {% endif %}
-
-    {% if tasks_data %}
-    <div class="section">
-        <h2>✅ Action Items & Tasks</h2>
-        {% for task in tasks_data %}
-        <div class="task-item">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                <strong>{{ task.title }}</strong>
-                <div>
-                    <span class="task-priority priority-{{ task.priority }}">{{ task.priority | upper }}</span>
-                    <span class="task-status status-{{ task.status }}">{{ task.status | replace('_', ' ') | title }}</span>
+        subject = f"✅ Meeting Processed: {meeting_title}"
+        
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }}
+                .content {{ background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .stats {{ display: flex; justify-content: space-around; margin: 20px 0; }}
+                .stat-box {{ background: white; padding: 15px; border-radius: 8px; text-align: center; flex: 1; margin: 0 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+                .stat-number {{ font-size: 24px; font-weight: bold; color: #667eea; }}
+                .stat-label {{ font-size: 12px; color: #6b7280; margin-top: 5px; }}
+                .summary-box {{ background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #667eea; }}
+                .button {{ display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; margin: 20px 0; }}
+                .footer {{ text-align: center; color: #6b7280; font-size: 12px; margin-top: 30px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>🎉 Your Meeting is Ready!</h1>
+                    <p>We've processed your meeting and extracted key insights</p>
+                </div>
+                <div class="content">
+                    <p>Hi {user_name},</p>
+                    <p>Great news! Your meeting "<strong>{meeting_title}</strong>" has been successfully processed.</p>
+                    
+                    <div class="stats">
+                        <div class="stat-box">
+                            <div class="stat-number">{meeting_duration}</div>
+                            <div class="stat-label">Minutes</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-number">{timeline_count}</div>
+                            <div class="stat-label">Timeline Events</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-number">{tasks_count}</div>
+                            <div class="stat-label">Tasks Extracted</div>
+                        </div>
+                    </div>
+                    
+                    <div class="summary-box">
+                        <h3>📝 Quick Summary</h3>
+                        <p>{transcription_summary}</p>
+                    </div>
+                    
+                    <p><strong>What's included:</strong></p>
+                    <ul>
+                        <li>✅ Full meeting transcription</li>
+                        <li>✅ Interactive timeline with key moments</li>
+                        <li>✅ Automatically extracted action items</li>
+                        <li>✅ AI-generated meeting summary</li>
+                    </ul>
+                    
+                    <center>
+                        <a href="{dashboard_url}/timeline?meeting={meeting_id}" class="button">
+                            View Meeting Details →
+                        </a>
+                    </center>
+                    
+                    <p style="margin-top: 30px; font-size: 14px; color: #6b7280;">
+                        💡 <strong>Tip:</strong> You can export this meeting to PDF or sync tasks to your calendar from the dashboard.
+                    </p>
+                </div>
+                <div class="footer">
+                    <p>AI Meeting Assistant | Making meetings more productive</p>
+                    <p>You're receiving this because you uploaded a meeting for processing.</p>
                 </div>
             </div>
-            {% if task.description %}
-            <p>{{ task.description }}</p>
-            {% endif %}
-            {% if task.assigned_to %}
-            <p><strong>Assigned to:</strong> {{ task.assigned_to }}</p>
-            {% endif %}
-            {% if task.deadline %}
-            <p><strong>Deadline:</strong> {{ task.deadline }}</p>
-            {% endif %}
-        </div>
-        {% endfor %}
-    </div>
-    {% endif %}
-
-    <div class="footer">
-        <p>This summary was automatically generated by AI Meeting Assistant</p>
-        <p>📧 You're receiving this because you have email notifications enabled</p>
-        <p>🔧 Manage your notification preferences in Settings</p>
-    </div>
-</body>
-</html>
+        </body>
+        </html>
         """
-
-        template = Template(html_template)
-        return template.render(
-            user_name=user_name,
-            meeting_title=meeting_data.get('title', 'Untitled Meeting'),
-            meeting_date=meeting_data.get('created_at', datetime.now().strftime('%Y-%m-%d %H:%M')),
-            duration_minutes=meeting_data.get('duration', 0),
-            timeline_count=len(timeline_data),
-            task_count=len(tasks_data),
-            timeline_data=timeline_data,
-            tasks_data=tasks_data
-        )
-
-    def _generate_meeting_summary_text(self, 
-                                     user_name: str,
-                                     meeting_data: Dict[str, Any],
-                                     timeline_data: List[Dict[str, Any]],
-                                     tasks_data: List[Dict[str, Any]]) -> str:
-        """
-        Generate plain text email content for meeting summary
-        """
+        
         text_content = f"""
-AI MEETING ASSISTANT - MEETING SUMMARY
-=====================================
-
-Hello {user_name}!
-
-Here's your comprehensive meeting summary:
-
-MEETING OVERVIEW
----------------
-Title: {meeting_data.get('title', 'Untitled Meeting')}
-Date: {meeting_data.get('created_at', datetime.now().strftime('%Y-%m-%d %H:%M'))}
-Duration: {meeting_data.get('duration', 0)} minutes
-Timeline Events: {len(timeline_data)}
-Tasks Created: {len(tasks_data)}
-Status: ✅ Processed Successfully
-
-"""
-
-        if timeline_data:
-            text_content += "\nMINUTE-BY-MINUTE TIMELINE\n"
-            text_content += "========================\n\n"
-            for item in timeline_data:
-                text_content += f"⏰ {item.get('timestamp', '')} ({item.get('timestamp_minutes', 0)} min)\n"
-                text_content += f"📋 {item.get('title', '')}\n"
-                text_content += f"💬 {item.get('content', '')}\n"
-                if item.get('participants'):
-                    text_content += f"👥 Participants: {', '.join(item['participants'])}\n"
-                text_content += "\n" + "-" * 50 + "\n\n"
-
-        if tasks_data:
-            text_content += "\nACTION ITEMS & TASKS\n"
-            text_content += "===================\n\n"
-            for task in tasks_data:
-                text_content += f"✅ {task.get('title', '')}\n"
-                text_content += f"   Priority: {task.get('priority', 'medium').upper()}\n"
-                text_content += f"   Status: {task.get('status', 'pending').replace('_', ' ').title()}\n"
-                if task.get('description'):
-                    text_content += f"   Description: {task['description']}\n"
-                if task.get('assigned_to'):
-                    text_content += f"   Assigned to: {task['assigned_to']}\n"
-                if task.get('deadline'):
-                    text_content += f"   Deadline: {task['deadline']}\n"
-                text_content += "\n"
-
-        text_content += """
----
-This summary was automatically generated by AI Meeting Assistant
-📧 You're receiving this because you have email notifications enabled
-🔧 Manage your notification preferences in Settings
-"""
-
-        return text_content
-
-    def _generate_task_reminder_html(self, user_name: str, tasks: List[Dict[str, Any]]) -> str:
-        """Generate HTML for task reminder email"""
-        # Similar structure to meeting summary but focused on tasks
-        # Implementation would be similar to above
-        return f"<h1>Task Reminders for {user_name}</h1><!-- Task reminder HTML -->"
-
-    def _generate_task_reminder_text(self, user_name: str, tasks: List[Dict[str, Any]]) -> str:
-        """Generate plain text for task reminder email"""
-        return f"Task Reminders for {user_name}\n\n<!-- Task reminder text -->"
-
-    def get_email_health(self) -> Dict[str, Any]:
+        Hi {user_name},
+        
+        Your meeting "{meeting_title}" has been successfully processed!
+        
+        Meeting Stats:
+        - Duration: {meeting_duration} minutes
+        - Timeline Events: {timeline_count}
+        - Tasks Extracted: {tasks_count}
+        
+        Summary:
+        {transcription_summary}
+        
+        View full details: {dashboard_url}/timeline?meeting={meeting_id}
+        
+        Best regards,
+        AI Meeting Assistant Team
         """
-        Check email service health
+        
+        message = self._create_message(user_email, subject, html_content, text_content)
+        return self._send_email(message)
+    
+    def send_task_assignment_notification(
+        self,
+        user_email: str,
+        user_name: str,
+        task_title: str,
+        task_description: str,
+        assigned_to: str,
+        deadline: Optional[datetime],
+        meeting_title: str,
+        priority: str,
+        dashboard_url: str
+    ) -> bool:
+        """Send notification when a task is assigned"""
+        subject = f"📋 New Task Assigned: {task_title}"
+        
+        deadline_str = deadline.strftime("%B %d, %Y at %I:%M %p") if deadline else "No deadline set"
+        priority_color = {
+            'high': '#ef4444',
+            'medium': '#f59e0b',
+            'low': '#10b981'
+        }.get(priority.lower(), '#6b7280')
+        
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }}
+                .content {{ background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .task-card {{ background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+                .priority-badge {{ display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold; color: white; background: {priority_color}; }}
+                .deadline-box {{ background: #fef3c7; padding: 15px; border-radius: 6px; margin: 15px 0; border-left: 4px solid #f59e0b; }}
+                .button {{ display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; margin: 20px 0; }}
+                .footer {{ text-align: center; color: #6b7280; font-size: 12px; margin-top: 30px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>📋 New Task Assigned</h1>
+                    <p>You have a new action item from your meeting</p>
+                </div>
+                <div class="content">
+                    <p>Hi {user_name},</p>
+                    <p>A new task has been assigned to <strong>{assigned_to}</strong> from the meeting "<strong>{meeting_title}</strong>".</p>
+                    
+                    <div class="task-card">
+                        <div style="margin-bottom: 10px;">
+                            <span class="priority-badge">{priority.upper()} PRIORITY</span>
+                        </div>
+                        <h2 style="margin: 10px 0;">{task_title}</h2>
+                        <p style="color: #6b7280;">{task_description}</p>
+                    </div>
+                    
+                    <div class="deadline-box">
+                        <strong>⏰ Deadline:</strong> {deadline_str}
+                    </div>
+                    
+                    <p><strong>Next Steps:</strong></p>
+                    <ul>
+                        <li>Review the task details in your dashboard</li>
+                        <li>Add it to your Google Calendar (if enabled)</li>
+                        <li>Mark as complete when done</li>
+                    </ul>
+                    
+                    <center>
+                        <a href="{dashboard_url}/tasks" class="button">
+                            View All Tasks →
+                        </a>
+                    </center>
+                </div>
+                <div class="footer">
+                    <p>AI Meeting Assistant | Stay on top of your action items</p>
+                </div>
+            </div>
+        </body>
+        </html>
         """
-        return {
-            'service': 'email_service',
-            'status': 'healthy' if self.enabled else 'disabled',
-            'smtp_server': self.smtp_server,
-            'smtp_port': self.smtp_port,
-            'email_configured': bool(self.email_address),
-            'from_name': self.from_name
-        }
+        
+        text_content = f"""
+        Hi {user_name},
+        
+        New Task Assigned: {task_title}
+        Priority: {priority.upper()}
+        Assigned to: {assigned_to}
+        Deadline: {deadline_str}
+        
+        From meeting: {meeting_title}
+        
+        Description:
+        {task_description}
+        
+        View task: {dashboard_url}/tasks
+        
+        Best regards,
+        AI Meeting Assistant Team
+        """
+        
+        message = self._create_message(user_email, subject, html_content, text_content)
+        return self._send_email(message)
+    
+    def send_calendar_sync_notification(
+        self,
+        user_email: str,
+        user_name: str,
+        tasks_synced: int,
+        calendar_name: str,
+        dashboard_url: str
+    ) -> bool:
+        """Send notification when tasks are synced to Google Calendar"""
+        subject = f"📅 {tasks_synced} Tasks Synced to Google Calendar"
+        
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{ background: linear-gradient(135deg, #4285f4 0%, #34a853 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }}
+                .content {{ background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .success-box {{ background: #d1fae5; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #10b981; text-align: center; }}
+                .button {{ display: inline-block; background: #4285f4; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; margin: 20px 0; }}
+                .footer {{ text-align: center; color: #6b7280; font-size: 12px; margin-top: 30px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>📅 Calendar Sync Complete!</h1>
+                    <p>Your tasks are now in Google Calendar</p>
+                </div>
+                <div class="content">
+                    <p>Hi {user_name},</p>
+                    
+                    <div class="success-box">
+                        <h2 style="margin: 0; color: #10b981;">✓ Successfully Synced</h2>
+                        <p style="font-size: 36px; font-weight: bold; margin: 10px 0; color: #059669;">{tasks_synced}</p>
+                        <p style="margin: 0; color: #6b7280;">tasks added to {calendar_name}</p>
+                    </div>
+                    
+                    <p>Your meeting tasks have been automatically added to your Google Calendar with:</p>
+                    <ul>
+                        <li>✅ Task titles and descriptions</li>
+                        <li>✅ Due dates and times</li>
+                        <li>✅ Priority levels</li>
+                        <li>✅ Meeting context</li>
+                    </ul>
+                    
+                    <p><strong>💡 Pro Tip:</strong> Any changes you make to these tasks in our dashboard will automatically sync back to your calendar!</p>
+                    
+                    <center>
+                        <a href="{dashboard_url}/calendar" class="button">
+                            View Calendar →
+                        </a>
+                    </center>
+                </div>
+                <div class="footer">
+                    <p>AI Meeting Assistant | Seamless calendar integration</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        text_content = f"""
+        Hi {user_name},
+        
+        Great news! {tasks_synced} tasks have been successfully synced to your Google Calendar ({calendar_name}).
+        
+        Your tasks now include:
+        - Task titles and descriptions
+        - Due dates and times
+        - Priority levels
+        - Meeting context
+        
+        View your calendar: {dashboard_url}/calendar
+        
+        Best regards,
+        AI Meeting Assistant Team
+        """
+        
+        message = self._create_message(user_email, subject, html_content, text_content)
+        return self._send_email(message)
+    
+    def send_feature_update_announcement(
+        self,
+        user_email: str,
+        user_name: str,
+        feature_title: str,
+        feature_description: str,
+        features_list: List[str],
+        cta_url: str,
+        cta_text: str = "Try It Now"
+    ) -> bool:
+        """Send announcement about new features"""
+        subject = f"🚀 New Feature: {feature_title}"
+        
+        features_html = "".join([f"<li>{feature}</li>" for feature in features_list])
+        
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{ background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }}
+                .content {{ background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .feature-box {{ background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+                .button {{ display: inline-block; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; margin: 20px 0; }}
+                .footer {{ text-align: center; color: #6b7280; font-size: 12px; margin-top: 30px; }}
+                ul {{ padding-left: 20px; }}
+                li {{ margin: 10px 0; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>🚀 Exciting New Feature!</h1>
+                    <p>We've added something special for you</p>
+                </div>
+                <div class="content">
+                    <p>Hi {user_name},</p>
+                    <p>We're excited to announce a new feature that will make your meetings even more productive!</p>
+                    
+                    <div class="feature-box">
+                        <h2>{feature_title}</h2>
+                        <p>{feature_description}</p>
+                        
+                        <h3>What's New:</h3>
+                        <ul>
+                            {features_html}
+                        </ul>
+                    </div>
+                    
+                    <p>This feature is available to all users starting today. Give it a try and let us know what you think!</p>
+                    
+                    <center>
+                        <a href="{cta_url}" class="button">
+                            {cta_text} →
+                        </a>
+                    </center>
+                    
+                    <p style="margin-top: 30px; font-size: 14px; color: #6b7280;">
+                        Have feedback? We'd love to hear from you! Reply to this email or contact us through the app.
+                    </p>
+                </div>
+                <div class="footer">
+                    <p>AI Meeting Assistant | Always improving for you</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        features_text = "\n".join([f"- {feature}" for feature in features_list])
+        text_content = f"""
+        Hi {user_name},
+        
+        Exciting news! We've just launched a new feature: {feature_title}
+        
+        {feature_description}
+        
+        What's New:
+        {features_text}
+        
+        Try it now: {cta_url}
+        
+        Best regards,
+        AI Meeting Assistant Team
+        """
+        
+        message = self._create_message(user_email, subject, html_content, text_content)
+        return self._send_email(message)
+    
+    def send_weekly_summary(
+        self,
+        user_email: str,
+        user_name: str,
+        meetings_count: int,
+        tasks_completed: int,
+        tasks_pending: int,
+        total_meeting_time: int,
+        top_meetings: List[Dict],
+        dashboard_url: str
+    ) -> bool:
+        """Send weekly summary of user activity"""
+        subject = f"📊 Your Weekly Summary - {meetings_count} Meetings Processed"
+        
+        meetings_html = ""
+        for meeting in top_meetings[:3]:
+            meetings_html += f"""
+            <div style="background: white; padding: 15px; border-radius: 6px; margin: 10px 0; border-left: 3px solid #667eea;">
+                <strong>{meeting['title']}</strong><br>
+                <span style="color: #6b7280; font-size: 14px;">
+                    {meeting['date']} • {meeting['duration']} min • {meeting['tasks']} tasks
+                </span>
+            </div>
+            """
+        
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }}
+                .content {{ background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .stats-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 20px 0; }}
+                .stat-card {{ background: white; padding: 20px; border-radius: 8px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+                .stat-number {{ font-size: 32px; font-weight: bold; color: #667eea; }}
+                .stat-label {{ font-size: 14px; color: #6b7280; margin-top: 5px; }}
+                .button {{ display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; margin: 20px 0; }}
+                .footer {{ text-align: center; color: #6b7280; font-size: 12px; margin-top: 30px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>📊 Your Weekly Summary</h1>
+                    <p>Here's what you accomplished this week</p>
+                </div>
+                <div class="content">
+                    <p>Hi {user_name},</p>
+                    <p>Great week! Here's a summary of your meeting activity:</p>
+                    
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-number">{meetings_count}</div>
+                            <div class="stat-label">Meetings Processed</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-number">{total_meeting_time}</div>
+                            <div class="stat-label">Total Minutes</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-number">{tasks_completed}</div>
+                            <div class="stat-label">Tasks Completed</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-number">{tasks_pending}</div>
+                            <div class="stat-label">Tasks Pending</div>
+                        </div>
+                    </div>
+                    
+                    <h3>📅 Top Meetings This Week:</h3>
+                    {meetings_html}
+                    
+                    <center>
+                        <a href="{dashboard_url}/dashboard" class="button">
+                            View Full Dashboard →
+                        </a>
+                    </center>
+                    
+                    <p style="margin-top: 30px; font-size: 14px; color: #6b7280;">
+                        Keep up the great work! 🎉
+                    </p>
+                </div>
+                <div class="footer">
+                    <p>AI Meeting Assistant | Your productivity partner</p>
+                    <p>You can manage email preferences in your settings.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        text_content = f"""
+        Hi {user_name},
+        
+        Your Weekly Summary:
+        
+        - Meetings Processed: {meetings_count}
+        - Total Meeting Time: {total_meeting_time} minutes
+        - Tasks Completed: {tasks_completed}
+        - Tasks Pending: {tasks_pending}
+        
+        View full dashboard: {dashboard_url}/dashboard
+        
+        Keep up the great work!
+        
+        Best regards,
+        AI Meeting Assistant Team
+        """
+        
+        message = self._create_message(user_email, subject, html_content, text_content)
+        return self._send_email(message)
 
-# Create global email service instance
+
+# Global email service instance
 email_service = EmailService()
