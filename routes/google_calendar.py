@@ -62,16 +62,13 @@ def sync_tasks_to_calendar():
         WHERE m.id = %s
         """
         meeting_result = rds_db.execute_query(meeting_query, (meeting_id,), fetch_one=True)
-        if not meeting_result:
-            return jsonify({"error": "Resource not found"}), 404
         
         if not meeting_result:
             return jsonify({'error': 'Meeting not found'}), 404
         
-        meeting_data = meeting_result[0]
-        meeting_title = meeting_data['title']
-        access_token = meeting_data['google_access_token']
-        refresh_token = meeting_data.get('google_refresh_token')
+        meeting_title = meeting_result['title']
+        access_token = meeting_result['google_access_token']
+        refresh_token = meeting_result.get('google_refresh_token')
         
         if not access_token:
             return jsonify({
@@ -114,17 +111,15 @@ def update_calendar_event(event_id):
         # Get user's Google access token
         get_token_query = "SELECT google_access_token, google_refresh_token FROM users WHERE id = %s"
         token_result = rds_db.execute_query(get_token_query, (user_id,), fetch_one=True)
-        if not token_result:
-            return jsonify({"error": "Resource not found"}), 404
         
-        if not token_result or not token_result[0]['google_access_token']:
+        if not token_result or not token_result.get('google_access_token'):
             return jsonify({
                 'success': False,
                 'error': 'Google Calendar not connected'
             }), 401
         
-        access_token = token_result[0]['google_access_token']
-        refresh_token = token_result[0].get('google_refresh_token')
+        access_token = token_result['google_access_token']
+        refresh_token = token_result.get('google_refresh_token')
         
         # Update calendar event
         update_result = calendar_service.update_calendar_event(
@@ -157,17 +152,15 @@ def delete_calendar_event(event_id):
         # Get user's Google access token
         get_token_query = "SELECT google_access_token, google_refresh_token FROM users WHERE id = %s"
         token_result = rds_db.execute_query(get_token_query, (user_id,), fetch_one=True)
-        if not token_result:
-            return jsonify({"error": "Resource not found"}), 404
         
-        if not token_result or not token_result[0]['google_access_token']:
+        if not token_result or not token_result.get('google_access_token'):
             return jsonify({
                 'success': False,
                 'error': 'Google Calendar not connected'
             }), 401
         
-        access_token = token_result[0]['google_access_token']
-        refresh_token = token_result[0].get('google_refresh_token')
+        access_token = token_result['google_access_token']
+        refresh_token = token_result.get('google_refresh_token')
         
         # Delete calendar event
         delete_result = calendar_service.delete_calendar_event(
