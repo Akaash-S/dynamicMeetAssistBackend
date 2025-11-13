@@ -11,6 +11,7 @@ from services.ai_processor import ai_processor
 from services.calendar_sync import calendar_service
 from services.email_service import email_service
 from middleware.validation import validate_file_upload, validate_user_id, add_security_headers
+from routes.notifications import create_notification
 
 upload_bp = Blueprint('upload', __name__)
 
@@ -272,6 +273,19 @@ def process_meeting_pipeline(meeting_id: str, audio_url: str, meeting_title: str
         update_processing_status('transcription', 'completed', 100)
         print(f"✅ Transcription completed for meeting {meeting_id}")
         
+        # Create notification for transcription completion
+        get_user_query = "SELECT user_id FROM meetings WHERE id = %s"
+        user_result = rds_db.execute_query(get_user_query, (meeting_id,), fetch_all=True)
+        if user_result:
+            user_id = user_result[0]['user_id']
+            create_notification(
+                user_id=user_id,
+                notification_type='transcription_ready',
+                title='Transcription Complete',
+                message=f'Transcription for "{meeting_title}" is ready',
+                data={'meeting_id': meeting_id, 'duration': duration}
+            )
+        
         # Step 2: AI Analysis (Timeline)
         print(f"🤖 Starting AI analysis for meeting {meeting_id}")
         update_processing_status('ai_analysis', 'processing', 20)
@@ -302,6 +316,18 @@ def process_meeting_pipeline(meeting_id: str, audio_url: str, meeting_title: str
         
         update_processing_status('ai_analysis', 'completed', 100)
         print(f"✅ AI analysis completed for meeting {meeting_id}")
+        
+        # Create notification for timeline generation
+        if user_result:
+            user_id = user_result[0]['user_id']
+            timeline_count = len(timeline_data.get('timeline', []))
+            create_notification(
+                user_id=user_id,
+                notification_type='timeline_generated',
+                title='Timeline Generated',
+                message=f'Timeline with {timeline_count} events created for "{meeting_title}"',
+                data={'meeting_id': meeting_id, 'event_count': timeline_count}
+            )
         
         # Step 3: Task Extraction
         print(f"🎯 Starting task extraction for meeting {meeting_id}")
@@ -357,6 +383,18 @@ def process_meeting_pipeline(meeting_id: str, audio_url: str, meeting_title: str
         update_processing_status('task_extraction', 'completed', 100)
         print(f"✅ Task extraction completed for meeting {meeting_id}")
         
+        # Create notification for task extraction
+        if user_result:
+            user_id = user_result[0]['user_id']
+            task_count = len(tasks_data.get('tasks', []))
+            create_notification(
+                user_id=user_id,
+                notification_type='tasks_extracted',
+                title='Tasks Extracted',
+                message=f'{task_count} tasks extracted from "{meeting_title}"',
+                data={'meeting_id': meeting_id, 'task_count': task_count, 'task_ids': task_ids}
+            )
+        
         # Step 4: Calendar Sync
         print(f"📅 Starting calendar sync for meeting {meeting_id}")
         update_processing_status('calendar_sync', 'processing', 40)
@@ -408,6 +446,15 @@ def process_meeting_pipeline(meeting_id: str, audio_url: str, meeting_title: str
                                 ))
                             
                             update_processing_status('calendar_sync', 'completed', 100)
+                            
+                            # Create notification for calendar sync
+                            create_notification(
+                                user_id=user_id,
+                                notification_type='calendar_synced',
+                                title='Calendar Synced',
+                                message=f'{sync_result["synced_count"]} tasks synced to Google Calendar',
+                                data={'meeting_id': meeting_id, 'synced_count': sync_result['synced_count']}
+                            )
                         else:
                             error_msg = f"Synced {sync_result['synced_count']}/{len(tasks_data['tasks'])} tasks. Errors: {sync_result.get('errors', [])}"
                             print(f"⚠️ Partial calendar sync: {error_msg}")
@@ -437,6 +484,19 @@ def process_meeting_pipeline(meeting_id: str, audio_url: str, meeting_title: str
         rds_db.execute_query(update_meeting_query, ('completed', datetime.utcnow(), meeting_id))
         
         print(f"🎉 Complete processing pipeline finished for meeting {meeting_id}")
+        
+        # Create final notification for meeting completion
+        get_user_query = "SELECT user_id FROM meetings WHERE id = %s"
+        user_result = rds_db.execute_query(get_user_query, (meeting_id,), fetch_all=True)
+        if user_result:
+            user_id = user_result[0]['user_id']
+            create_notification(
+                user_id=user_id,
+                notification_type='meeting_completed',
+                title='Meeting Processing Complete',
+                message=f'"{meeting_title}" has been fully processed and is ready to view',
+                data={'meeting_id': meeting_id}
+            )
         
         # Step 5: Send Email Notification
         print(f"📧 Sending email notification for meeting {meeting_id}")

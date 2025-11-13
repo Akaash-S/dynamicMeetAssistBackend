@@ -24,6 +24,7 @@ from routes.upload import upload_bp
 from routes.health import health_bp
 from routes.google_calendar import google_calendar_bp
 from routes.totp_simple import totp_bp
+from routes.notifications import notifications_bp
 
 # Import CORS debug routes (development only)
 if os.getenv('FLASK_ENV') == 'development':
@@ -244,6 +245,7 @@ def create_app():
     app.register_blueprint(health_bp, url_prefix='/api/health/detailed')
     app.register_blueprint(google_calendar_bp, url_prefix='/api/calendar')
     app.register_blueprint(totp_bp, url_prefix='/api')
+    app.register_blueprint(notifications_bp, url_prefix='/api/notifications')
     
     # Register admin blueprints
     from routes.admin_auth import admin_auth_bp
