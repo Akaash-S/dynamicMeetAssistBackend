@@ -117,6 +117,152 @@ def get_tasks():
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
+@tasks_bp.route('/upcoming', methods=['GET'])
+def get_upcoming_tasks():
+    """Get upcoming tasks with deadlines"""
+    try:
+        raw_user_id = request.args.get('user_id')
+        if not raw_user_id:
+            return jsonify({'error': 'User ID is required'}), 400
+        
+        days_ahead = int(request.args.get('days', 30))
+        
+        # Use the same user_id resolution logic as other endpoints
+        import re
+        is_uuid = re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', raw_user_id or '', re.IGNORECASE) is not None
+        if is_uuid:
+            where_sql = "t.user_id = %s"
+            where_param = raw_user_id
+        else:
+            where_sql = "t.user_id = (SELECT id FROM users WHERE firebase_uid = %s)"
+            where_param = raw_user_id
+        
+        query = f"""
+        SELECT t.*, m.title as meeting_title 
+        FROM tasks t
+        JOIN meetings m ON t.meeting_id = m.id
+        WHERE {where_sql} 
+        AND t.deadline IS NOT NULL 
+        AND t.deadline <= NOW() + INTERVAL '{days_ahead} days'
+        AND t.status != 'completed'
+        ORDER BY t.deadline ASC
+        """
+        
+        tasks = rds_db.execute_query(query, (where_param,), fetch_all=True)
+        
+        # Format tasks
+        formatted_tasks = []
+        for task in tasks or []:
+            # Calculate days until deadline
+            if task['deadline']:
+                days_until = (task['deadline'].date() - datetime.now().date()).days
+            else:
+                days_until = None
+            
+            formatted_tasks.append({
+                'id': task['id'],
+                'meeting_id': task['meeting_id'],
+                'meeting_title': task['meeting_title'],
+                'title': task['title'],
+                'description': task['description'],
+                'assigned_to': task['assigned_to'],
+                'deadline': task['deadline'].isoformat() if task['deadline'] else None,
+                'days_until_deadline': days_until,
+                'priority': task['priority'],
+                'status': task['status'],
+                'is_overdue': days_until < 0 if days_until is not None else False
+            })
+        
+        return jsonify({
+            'upcoming_tasks': formatted_tasks,
+            'total': len(formatted_tasks),
+            'days_ahead': days_ahead
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': f'Failed to get upcoming tasks: {str(e)}'}), 500
+
+@tasks_bp.route('/stats', methods=['GET'])
+def get_task_stats():
+    """Get task statistics for a user"""
+    try:
+        raw_user_id = request.args.get('user_id')
+        if not raw_user_id:
+            return jsonify({'error': 'User ID is required'}), 400
+        import re
+        is_uuid = re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', raw_user_id or '', re.IGNORECASE) is not None
+        if is_uuid:
+            where_sql = "t.user_id = %s"
+            where_param = raw_user_id
+        else:
+            where_sql = "t.user_id = (SELECT id FROM users WHERE firebase_uid = %s)"
+            where_param = raw_user_id
+
+        stats = {}
+        
+        # Total tasks
+        total_query = f"""
+        SELECT COALESCE(COUNT(*), 0) as count
+        FROM tasks t
+        WHERE {where_sql}
+        """
+        total_result = rds_db.execute_query(total_query, (where_param,), fetch_one=True)
+        stats['total_tasks'] = int(total_result['count']) if total_result else 0
+        
+        # Tasks by status
+        status_query = f"""
+        SELECT t.status, COALESCE(COUNT(*), 0) as count
+        FROM tasks t
+        WHERE {where_sql}
+        GROUP BY t.status
+        """
+        status_result = rds_db.execute_query(status_query, (where_param,), fetch_all=True)
+        stats['by_status'] = {row['status']: int(row['count']) for row in status_result} if status_result else {}
+        
+        # Tasks by priority
+        priority_query = f"""
+        SELECT t.priority, COALESCE(COUNT(*), 0) as count
+        FROM tasks t
+        WHERE {where_sql}
+        GROUP BY t.priority
+        """
+        priority_result = rds_db.execute_query(priority_query, (where_param,), fetch_all=True)
+        stats['by_priority'] = {row['priority']: int(row['count']) for row in priority_result} if priority_result else {}
+        
+        # Overdue tasks
+        overdue_query = f"""
+        SELECT COALESCE(COUNT(*), 0) as count
+        FROM tasks t
+        WHERE {where_sql}
+        AND t.deadline IS NOT NULL
+        AND t.deadline < NOW() 
+        AND t.status != 'completed'
+        """
+        overdue_result = rds_db.execute_query(overdue_query, (where_param,), fetch_one=True)
+        stats['overdue_tasks'] = int(overdue_result['count']) if overdue_result else 0
+        
+        # Due this week
+        week_query = f"""
+        SELECT COALESCE(COUNT(*), 0) as count
+        FROM tasks t
+        WHERE {where_sql}
+        AND t.deadline IS NOT NULL
+        AND t.deadline BETWEEN NOW() AND NOW() + INTERVAL '7 days'
+        AND t.status != 'completed'
+        """
+        week_result = rds_db.execute_query(week_query, (where_param,), fetch_one=True)
+        stats['due_this_week'] = int(week_result['count']) if week_result else 0
+        
+        # Completion rate
+        total = stats['total_tasks']
+        completed = stats['by_status'].get('completed', 0)
+        stats['completion_rate'] = round((completed / total) * 100, 2) if total > 0 else 0
+        
+        return jsonify(stats), 200
+        
+    except Exception as e:
+        return jsonify({'error': f'Failed to get task stats: {str(e)}'}), 500
+
 @tasks_bp.route('/<task_id>', methods=['GET'])
 def get_task(task_id):
     """Get specific task details"""
@@ -341,152 +487,3 @@ def delete_task(task_id):
         
     except Exception as e:
         return jsonify({'error': f'Failed to delete task: {str(e)}'}), 500
-
-@tasks_bp.route('/upcoming', methods=['GET'])
-def get_upcoming_tasks():
-    """Get upcoming tasks with deadlines"""
-    try:
-        raw_user_id = request.args.get('user_id')
-        if not raw_user_id:
-            return jsonify({'error': 'User ID is required'}), 400
-        
-        days_ahead = int(request.args.get('days', 30))
-        
-        # Use the same user_id resolution logic as other endpoints
-        import re
-        is_uuid = re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', raw_user_id or '', re.IGNORECASE) is not None
-        if is_uuid:
-            where_sql = "t.user_id = %s"
-            where_param = raw_user_id
-        else:
-            where_sql = "t.user_id = (SELECT id FROM users WHERE firebase_uid = %s)"
-            where_param = raw_user_id
-        
-        query = f"""
-        SELECT t.*, m.title as meeting_title 
-        FROM tasks t
-        JOIN meetings m ON t.meeting_id = m.id
-        WHERE {where_sql} 
-        AND t.deadline IS NOT NULL 
-        AND t.deadline <= NOW() + INTERVAL '%s days'
-        AND t.status != 'completed'
-        ORDER BY t.deadline ASC
-        """
-        
-        tasks = rds_db.execute_query(query, (where_param, days_ahead), fetch_one=True)
-        if not tasks:
-            return jsonify({"error": "Resource not found"}), 404
-        
-        # Format tasks
-        formatted_tasks = []
-        for task in tasks:
-            # Calculate days until deadline
-            if task['deadline']:
-                days_until = (task['deadline'].date() - datetime.now().date()).days
-            else:
-                days_until = None
-            
-            formatted_tasks.append({
-                'id': task['id'],
-                'meeting_id': task['meeting_id'],
-                'meeting_title': task['meeting_title'],
-                'title': task['title'],
-                'description': task['description'],
-                'assigned_to': task['assigned_to'],
-                'deadline': task['deadline'].isoformat() if task['deadline'] else None,
-                'days_until_deadline': days_until,
-                'priority': task['priority'],
-                'status': task['status'],
-                'is_overdue': days_until < 0 if days_until is not None else False
-            })
-        
-        return jsonify({
-            'upcoming_tasks': formatted_tasks,
-            'total': len(formatted_tasks),
-            'days_ahead': days_ahead
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'error': f'Failed to get upcoming tasks: {str(e)}'}), 500
-
-@tasks_bp.route('/stats', methods=['GET'])
-def get_task_stats():
-    """Get task statistics for a user"""
-    try:
-        raw_user_id = request.args.get('user_id')
-        if not raw_user_id:
-            return jsonify({'error': 'User ID is required'}), 400
-        import re
-        is_uuid = re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', raw_user_id or '', re.IGNORECASE) is not None
-        if is_uuid:
-            where_sql = "t.user_id = %s"
-            where_param = raw_user_id
-        else:
-            where_sql = "t.user_id = (SELECT id FROM users WHERE firebase_uid = %s)"
-            where_param = raw_user_id
-
-        stats = {}
-        
-        # Total tasks
-        total_query = f"""
-        SELECT COALESCE(COUNT(*), 0) as count
-        FROM tasks t
-        WHERE {where_sql}
-        """
-        total_result = rds_db.execute_query(total_query, (where_param,), fetch_one=True)
-        stats['total_tasks'] = int(total_result['count']) if total_result else 0
-        
-        # Tasks by status
-        status_query = f"""
-        SELECT t.status, COALESCE(COUNT(*), 0) as count
-        FROM tasks t
-        WHERE {where_sql}
-        GROUP BY t.status
-        """
-        status_result = rds_db.execute_query(status_query, (where_param,), fetch_all=True)
-        stats['by_status'] = {row['status']: int(row['count']) for row in status_result} if status_result else {}
-        
-        # Tasks by priority
-        priority_query = f"""
-        SELECT t.priority, COALESCE(COUNT(*), 0) as count
-        FROM tasks t
-        WHERE {where_sql}
-        GROUP BY t.priority
-        """
-        priority_result = rds_db.execute_query(priority_query, (where_param,), fetch_all=True)
-        stats['by_priority'] = {row['priority']: int(row['count']) for row in priority_result} if priority_result else {}
-        
-        # Overdue tasks
-        overdue_query = f"""
-        SELECT COALESCE(COUNT(*), 0) as count
-        FROM tasks t
-        WHERE {where_sql}
-        AND t.deadline IS NOT NULL
-        AND t.deadline < NOW() 
-        AND t.status != 'completed'
-        """
-        overdue_result = rds_db.execute_query(overdue_query, (where_param,), fetch_one=True)
-        stats['overdue_tasks'] = int(overdue_result['count']) if overdue_result else 0
-        
-        # Due this week
-        week_query = f"""
-        SELECT COALESCE(COUNT(*), 0) as count
-        FROM tasks t
-        WHERE {where_sql}
-        AND t.deadline IS NOT NULL
-        AND t.deadline BETWEEN NOW() AND NOW() + INTERVAL '7 days'
-        AND t.status != 'completed'
-        """
-        week_result = rds_db.execute_query(week_query, (where_param,), fetch_one=True)
-        stats['due_this_week'] = int(week_result['count']) if week_result else 0
-        
-        # Completion rate
-        total = stats['total_tasks']
-        completed = stats['by_status'].get('completed', 0)
-        stats['completion_rate'] = round((completed / total) * 100, 2) if total > 0 else 0
-        
-        return jsonify(stats), 200
-        
-    except Exception as e:
-        return jsonify({'error': f'Failed to get task stats: {str(e)}'}), 500
-
