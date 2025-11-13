@@ -35,7 +35,7 @@ import logging
 import os
 from datetime import datetime
 
-from config.database import get_db
+from config.aws_rds_database import rds_db
 from middleware.validation import validate_json, add_security_headers, RequestValidator
 
 # Set up logger
@@ -84,7 +84,7 @@ def verify_user():
         if not force_create:
             # Strategy 1: Look for exact email match first (most reliable)
             email_query = "SELECT * FROM users WHERE email = %s"
-            email_result = get_db().execute_query(email_query, [email])
+            email_result = rds_db.execute_query(email_query, [email], fetch_all=True)
             
             if email_result:
                 existing_user = email_result
@@ -94,13 +94,13 @@ def verify_user():
                 auth_queries = []
                 
                 if firebase_uid:
-                    firebase_result = get_db().execute_query("SELECT * FROM users WHERE firebase_uid = %s", [firebase_uid])
+                    firebase_result = rds_db.execute_query("SELECT * FROM users WHERE firebase_uid = %s", [firebase_uid], fetch_all=True)
                     if firebase_result:
                         existing_user = firebase_result
                         print(f'Backend: Found existing user by firebase_uid: {firebase_uid}')
                 
                 if not existing_user and google_oauth_id:
-                    google_result = get_db().execute_query("SELECT * FROM users WHERE google_oauth_id = %s", [google_oauth_id])
+                    google_result = rds_db.execute_query("SELECT * FROM users WHERE google_oauth_id = %s", [google_oauth_id], fetch_all=True)
                     if google_result:
                         existing_user = google_result
                         print(f'Backend: Found existing user by google_oauth_id: {google_oauth_id}')
@@ -152,7 +152,7 @@ def verify_user():
             update_query += " WHERE id = %s"
             params.append(user['id'])
             
-            get_db().execute_query(update_query, params)
+            rds_db.execute_query(update_query, params)
             print('Backend: User updated successfully.')
             
             return jsonify({
@@ -201,7 +201,7 @@ def verify_user():
             print(f"🔍 INSERT params: {insert_params}")
             
             try:
-                result = get_db().execute_query(insert_query, insert_params)
+                result = rds_db.execute_query(insert_query, insert_params)
                 print(f"✅ User created successfully. Result: {result}")
             except Exception as e:
                 print(f"❌ Error creating user: {e}")
@@ -255,7 +255,7 @@ def get_user(identifier):
         
         for strategy_name, query in lookup_strategies:
             try:
-                result = get_db().execute_query(query, [identifier])
+                result = rds_db.execute_query(query, [identifier], fetch_all=True)
                 if result and len(result) > 0:
                     user = result[0]
                     found_by = strategy_name
@@ -315,7 +315,9 @@ def update_user(firebase_uid):
         
         # Check if user exists
         check_query = "SELECT id FROM users WHERE firebase_uid = %s"
-        check_result = get_db().execute_query(check_query, (firebase_uid,))
+        check_result = rds_db.execute_query(check_query, (firebase_uid,), fetch_one==True)
+        if not check_result:
+            return jsonify({"error": "Resource not found"}), 404
         
         if not check_result:
             return jsonify({'error': 'User not found'}), 404
@@ -351,14 +353,16 @@ def update_user(firebase_uid):
         
         # Execute database update
         try:
-            updated_count = get_db().execute_query(update_query, params)
+            updated_count = rds_db.execute_query(update_query, params)
         except Exception as db_error:
             return jsonify({'error': f'Failed to update user in database: {str(db_error)}'}), 500
         
         if updated_count > 0:
             # Get updated user data from database (single source of truth)
             get_query = "SELECT * FROM users WHERE firebase_uid = %s"
-            updated_user_result = get_db().execute_query(get_query, (firebase_uid,))
+            updated_user_result = rds_db.execute_query(get_query, (firebase_uid,), fetch_one=True)
+            if not updated_user_result:
+                return jsonify({"error": "Resource not found"}), 404
             updated_user = updated_user_result[0]
             
             return jsonify({
@@ -410,7 +414,9 @@ def update_notification_preferences(firebase_uid):
         check_query = "SELECT id, name, email FROM users WHERE firebase_uid = %s"
         
         try:
-            check_result = get_db().execute_query(check_query, (firebase_uid,))
+            check_result = rds_db.execute_query(check_query, (firebase_uid,), fetch_one=True)
+            if not check_result:
+                return jsonify({"error": "Resource not found"}), 404
         except Exception as db_error:
             return jsonify({
                 'error': 'Database query failed',
@@ -449,7 +455,7 @@ def update_notification_preferences(firebase_uid):
         """
         
         try:
-            get_db().execute_query(update_query, (
+            rds_db.execute_query(update_query, (
                 email_notifications, 
                 in_app_notifications, 
                 datetime.utcnow(), 
@@ -509,7 +515,7 @@ def get_notification_preferences(firebase_uid):
         
         # Check if database is available
         try:
-            get_db().test_connection()
+            rds_db.test_connection()
             print("✅ Database connection test passed")
         except Exception as db_error:
             print(f"❌ Database connection failed: {db_error}")
@@ -536,7 +542,7 @@ def get_notification_preferences(firebase_uid):
         """
         
         try:
-            user_result = get_db().execute_query(user_query, (firebase_uid,))
+            user_result = rds_db.execute_query(user_query, (firebase_uid,), fetch_one=True)
             print(f"🔍 Database query result: {len(user_result) if user_result else 0} users found")
         except Exception as db_error:
             print(f"❌ Database query failed: {db_error}")
@@ -608,7 +614,9 @@ def delete_user_account(firebase_uid):
         
         # Check if user exists
         check_query = "SELECT id FROM users WHERE firebase_uid = %s"
-        check_result = get_db().execute_query(check_query, (firebase_uid,))
+        check_result = rds_db.execute_query(check_query, (firebase_uid,), fetch_one=True)
+        if not check_result:
+            return jsonify({"error": "Resource not found"}), 404
         
         if not check_result:
             return jsonify({'error': 'User not found'}), 404
@@ -618,29 +626,29 @@ def delete_user_account(firebase_uid):
         # Delete user data in order (foreign key constraints)
         try:
             # Delete tasks
-            get_db().execute_query("DELETE FROM tasks WHERE user_id = %s", (user_id,))
+            rds_db.execute_query("DELETE FROM tasks WHERE user_id = %s", (user_id,), fetch_one=True)
             
             # Delete timeline entries for user's meetings
-            get_db().execute_query("""
+            rds_db.execute_query("""
                 DELETE FROM timeline 
                 WHERE meeting_id IN (
                     SELECT id FROM meetings WHERE user_id = %s
-                )
-            """, (user_id,))
+                , fetch_all==True), fetch_all==True
+            """, (user_id,), fetch_one=True)
             
             # Delete processing status for user's meetings
-            get_db().execute_query("""
+            rds_db.execute_query("""
                 DELETE FROM processing_status 
                 WHERE meeting_id IN (
                     SELECT id FROM meetings WHERE user_id = %s
-                )
-            """, (user_id,))
+                , fetch_all==True), fetch_all==True
+            """, (user_id,), fetch_one==True)
             
             # Delete meetings
-            get_db().execute_query("DELETE FROM meetings WHERE user_id = %s", (user_id,))
+            rds_db.execute_query("DELETE FROM meetings WHERE user_id = %s", (user_id,), fetch_one==True)
             
             # Finally, delete user
-            get_db().execute_query("DELETE FROM users WHERE firebase_uid = %s", (firebase_uid,))
+            rds_db.execute_query("DELETE FROM users WHERE firebase_uid = %s", (firebase_uid,), fetch_one==True)
             
             return jsonify({
                 'success': True,
@@ -667,7 +675,9 @@ def link_google_account(user_id):
 
         # Check if user exists (by ID, not firebase_uid)
         check_query = "SELECT id FROM users WHERE id = %s"
-        check_result = get_db().execute_query(check_query, (user_id,))
+        check_result = rds_db.execute_query(check_query, (user_id,), fetch_one=True)
+        if not check_result:
+            return jsonify({"error": "Resource not found"}), 404
 
         if not check_result:
             return jsonify({'error': 'User not found'}), 404
@@ -679,7 +689,7 @@ def link_google_account(user_id):
         WHERE id = %s
         """
 
-        get_db().execute_query(update_query, (access_token, refresh_token, datetime.utcnow(), user_id))
+        rds_db.execute_query(update_query, (access_token, refresh_token, datetime.utcnow(), user_id))
 
         return jsonify({
             'success': True,
@@ -740,7 +750,7 @@ def exchange_calendar_token():
         WHERE id = %s
         """
         
-        get_db().execute_query(update_query, (
+        rds_db.execute_query(update_query, (
             tokens['access_token'],
             tokens.get('refresh_token'),
             datetime.utcnow(),
@@ -784,14 +794,14 @@ def verify_google_oauth():
         if not force_create:
             # Strategy 1: Look for exact email match first (most reliable)
             email_query = "SELECT * FROM users WHERE email = %s"
-            email_result = get_db().execute_query(email_query, [email])
+            email_result = rds_db.execute_query(email_query, [email], fetch_all==True)
             
             if email_result:
                 existing_user = email_result
                 print(f'Backend: OAuth - Found existing user by email: {email}')
             elif google_oauth_id:
                 # Strategy 2: Look by google_oauth_id only if no email match
-                google_result = get_db().execute_query("SELECT * FROM users WHERE google_oauth_id = %s", [google_oauth_id])
+                google_result = rds_db.execute_query("SELECT * FROM users WHERE google_oauth_id = %s", [google_oauth_id], fetch_all==True), fetch_all==True
                 if google_result:
                     existing_user = google_result
                     print(f'Backend: OAuth - Found existing user by google_oauth_id: {google_oauth_id}')
@@ -812,7 +822,7 @@ def verify_google_oauth():
             WHERE id = %s
             """
             
-            get_db().execute_query(update_query, (
+            rds_db.execute_query(update_query, (
                 email, name or user['name'], google_oauth_id, access_token,
                 data.get('refresh_token'), data.get('expires_at'),
                 data.get('google_calendar_enabled', True),
@@ -843,7 +853,7 @@ def verify_google_oauth():
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             
-            get_db().execute_query(insert_query, (
+            rds_db.execute_query(insert_query, (
                 user_id, google_oauth_id, email, name or email.split('@')[0], 'google_oauth',
                 access_token, data.get('refresh_token'), data.get('expires_at'),
                 data.get('google_calendar_enabled', True),

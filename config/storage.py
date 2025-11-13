@@ -1,4 +1,6 @@
-from supabase import create_client, Client
+# DEPRECATED: Use services/aws_s3_service.py instead
+# # DEPRECATED: Use services/aws_s3_service.py instead
+# from supabase import create_client, Client
 import os
 from typing import Optional
 from dotenv import load_dotenv
@@ -7,15 +9,15 @@ load_dotenv()
 
 class StorageService:
     def __init__(self):
-        self.url = os.getenv('SUPABASE_URL')
-        self.key = os.getenv('SUPABASE_KEY')
+        self.url = os.getenv('S3_BUCKET_NAME')
+        self.key = os.getenv('AWS_ACCESS_KEY_ID')
         self.client: Client = None
         self.bucket_name = 'meeting-audio'
         
         if not self.url or not self.key:
-            print("⚠️ SUPABASE_URL and SUPABASE_KEY environment variables are required")
-            print(f"⚠️ SUPABASE_URL present: {bool(self.url)}")
-            print(f"⚠️ SUPABASE_KEY present: {bool(self.key)}")
+            print("⚠️ S3_BUCKET_NAME and AWS_ACCESS_KEY_ID environment variables are required")
+            print(f"⚠️ S3_BUCKET_NAME present: {bool(self.url)}")
+            print(f"⚠️ AWS_ACCESS_KEY_ID present: {bool(self.key)}")
             return
         
         try:

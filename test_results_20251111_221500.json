@@ -1,0 +1,141 @@
+{
+  "timestamp": "2025-11-11T22:15:00.502378",
+  "total_tests": 19,
+  "passed": 4,
+  "failed": 15,
+  "results": [
+    {
+      "endpoint": "/",
+      "method": "GET",
+      "description": "Root endpoint",
+      "success": true,
+      "message": "Status 200"
+    },
+    {
+      "endpoint": "/api/health",
+      "method": "GET",
+      "description": "Simple health check",
+      "success": true,
+      "message": "Status 200"
+    },
+    {
+      "endpoint": "/api/health/detailed",
+      "method": "GET",
+      "description": "Detailed health check",
+      "success": false,
+      "message": "Request timeout"
+    },
+    {
+      "endpoint": "/api/auth/verify",
+      "method": "POST",
+      "description": "Verify/create user (Firebase)",
+      "success": false,
+      "message": "Status 500"
+    },
+    {
+      "endpoint": "/api/auth/verify",
+      "method": "POST",
+      "description": "Verify/create user (Google OAuth)",
+      "success": false,
+      "message": "Status 500"
+    },
+    {
+      "endpoint": "/api/meetings/test",
+      "method": "GET",
+      "description": "Test meetings blueprint",
+      "success": true,
+      "message": "Status 200"
+    },
+    {
+      "endpoint": "/api/meetings/debug",
+      "method": "GET",
+      "description": "Debug meetings endpoint",
+      "success": true,
+      "message": "Status 200"
+    },
+    {
+      "endpoint": "/api/meetings",
+      "method": "GET",
+      "description": "Get all meetings",
+      "success": false,
+      "message": "Status 400"
+    },
+    {
+      "endpoint": "/api/meetings/stats",
+      "method": "GET",
+      "description": "Get meeting statistics",
+      "success": false,
+      "message": "Status 400"
+    },
+    {
+      "endpoint": "/api/meetings/routes",
+      "method": "GET",
+      "description": "List meeting routes",
+      "success": false,
+      "message": "Status 500"
+    },
+    {
+      "endpoint": "/api/tasks",
+      "method": "GET",
+      "description": "Get all tasks",
+      "success": false,
+      "message": "Request timeout"
+    },
+    {
+      "endpoint": "/api/tasks/stats",
+      "method": "GET",
+      "description": "Get task statistics",
+      "success": false,
+      "message": "Request timeout"
+    },
+    {
+      "endpoint": "/api/tasks/upcoming",
+      "method": "GET",
+      "description": "Get upcoming tasks",
+      "success": false,
+      "message": "Status 400"
+    },
+    {
+      "endpoint": "/api/upload/meetings",
+      "method": "GET",
+      "description": "List recent meetings",
+      "success": false,
+      "message": "Status 500"
+    },
+    {
+      "endpoint": "/api/admin/auth/login",
+      "method": "POST",
+      "description": "Admin login",
+      "success": false,
+      "message": "Status 500"
+    },
+    {
+      "endpoint": "/api/admin/users",
+      "method": "GET",
+      "description": "Get all users (admin)",
+      "success": false,
+      "message": "Status 401"
+    },
+    {
+      "endpoint": "/api/admin/issues",
+      "method": "GET",
+      "description": "Get all issues (admin)",
+      "success": false,
+      "message": "Status 401"
+    },
+    {
+      "endpoint": "/api/admin/payments",
+      "method": "GET",
+      "description": "Get all payments (admin)",
+      "success": false,
+      "message": "Status 401"
+    },
+    {
+      "endpoint": "/api/calendar/test",
+      "method": "GET",
+      "description": "Test calendar access",
+      "success": false,
+      "message": "Status 400"
+    }
+  ]
+}

@@ -8,7 +8,7 @@ from datetime import datetime
 import logging
 import traceback
 
-from config.database import get_db
+# Removed: # Removed: from config.database import get_db
 from services.calendar_sync import calendar_service
 
 # Set up logging
@@ -27,7 +27,7 @@ def _resolve_db_user_id(raw_user_id: str):
         uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
         if re.match(uuid_pattern, raw_user_id, re.IGNORECASE):
             return raw_user_id
-        row = get_db().execute_query("SELECT id FROM users WHERE firebase_uid = %s", (raw_user_id,))
+        row = rds_db.execute_query("SELECT id FROM users WHERE firebase_uid = %s", (raw_user_id,), fetch_one=True)
         if row and len(row) > 0 and row[0].get('id'):
             return row[0]['id']
     except Exception:
@@ -52,7 +52,7 @@ def _sync_task_to_calendar(task_id: str, action: str = 'update'):
         JOIN users u ON t.user_id = u.id
         WHERE t.id = %s AND u.google_calendar_enabled = TRUE
         """
-        task_result = get_db().execute_query(task_query, (task_id,))
+        task_result = rds_db.execute_query(task_query, (task_id,))
         
         if not task_result:
             logger.info(f"Task {task_id} not found or calendar not enabled")
@@ -78,7 +78,7 @@ def _sync_task_to_calendar(task_id: str, action: str = 'update'):
             # Update task with calendar event ID
             if result['success']:
                 update_query = "UPDATE tasks SET calendar_event_id = %s WHERE id = %s"
-                get_db().execute_query(update_query, (result['event_id'], task_id))
+                rds_db.execute_query(update_query, (result['event_id'], task_id))
                 logger.info(f"✅ Task {task_id} synced to calendar: {result['event_id']}")
             
             return result
@@ -161,7 +161,7 @@ def get_tasks():
         query += " ORDER BY t.deadline ASC NULLS LAST, t.created_at DESC"
         
         logger.info(f"🔍 Executing query with params: {params}")
-        tasks = get_db().execute_query(query, params)
+        tasks = rds_db.execute_query(query, params)
         logger.info(f"✅ Found {len(tasks) if tasks else 0} tasks")
         
         # Format tasks
@@ -208,7 +208,7 @@ def update_task(task_id):
         
         # Check if task exists
         check_query = "SELECT * FROM tasks WHERE id = %s"
-        check_result = get_db().execute_query(check_query, (task_id,))
+        check_result = rds_db.execute_query(check_query, (task_id,))
         
         if not check_result:
             return jsonify({'error': 'Task not found'}), 404
@@ -273,11 +273,11 @@ def update_task(task_id):
         WHERE id = %s
         """
         
-        updated_count = get_db().execute_query(update_query, params)
+        updated_count = rds_db.execute_query(update_query, params)
         
         if updated_count > 0:
             # Get updated task
-            updated_task_result = get_db().execute_query(check_query, (task_id,))
+            updated_task_result = rds_db.execute_query(check_query, (task_id,))
             updated_task = updated_task_result[0]
             
             # Sync to Google Calendar
@@ -316,7 +316,7 @@ def delete_task(task_id):
         
         # Delete task from database
         delete_query = "DELETE FROM tasks WHERE id = %s"
-        deleted_count = get_db().execute_query(delete_query, (task_id,))
+        deleted_count = rds_db.execute_query(delete_query, (task_id,))
         
         if deleted_count > 0:
             return jsonify({
@@ -348,7 +348,7 @@ def update_task_status(task_id):
         
         # Check if task exists
         check_query = "SELECT id FROM tasks WHERE id = %s"
-        check_result = get_db().execute_query(check_query, (task_id,))
+        check_result = rds_db.execute_query(check_query, (task_id,))
         
         if not check_result:
             return jsonify({'error': 'Task not found'}), 404
@@ -360,7 +360,7 @@ def update_task_status(task_id):
         WHERE id = %s
         """
         
-        updated_count = get_db().execute_query(update_query, (new_status, datetime.utcnow(), task_id))
+        updated_count = rds_db.execute_query(update_query, (new_status, datetime.utcnow(), task_id))
         
         if updated_count > 0:
             # Sync to Google Calendar
@@ -411,7 +411,7 @@ def get_task_stats():
         WHERE {where_sql}
         """
         
-        stats_result = get_db().execute_query(stats_query, (where_param,))
+        stats_result = rds_db.execute_query(stats_query, (where_param,))
         
         if stats_result:
             stats = stats_result[0]
@@ -470,7 +470,7 @@ def get_upcoming_tasks():
         LIMIT 10
         """
         
-        tasks = get_db().execute_query(query, (where_param,))
+        tasks = rds_db.execute_query(query, (where_param,))
         
         formatted_tasks = []
         for task in tasks:

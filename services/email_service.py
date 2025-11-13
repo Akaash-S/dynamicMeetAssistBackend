@@ -466,6 +466,248 @@ class EmailService:
         message = self._create_message(user_email, subject, html_content, text_content)
         return self._send_email(message)
     
+    def send_2fa_email_code(
+        self,
+        user_email: str,
+        code: str
+    ) -> bool:
+        """Send 2FA verification code via email"""
+        subject = f"🔐 Your Verification Code: {code}"
+        
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }}
+                .content {{ background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .code-box {{ background: white; padding: 30px; border-radius: 8px; margin: 20px 0; text-align: center; border: 2px dashed #667eea; }}
+                .code {{ font-size: 48px; font-weight: bold; color: #667eea; letter-spacing: 8px; font-family: monospace; }}
+                .warning-box {{ background: #fef3c7; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #f59e0b; }}
+                .footer {{ text-align: center; color: #6b7280; font-size: 12px; margin-top: 30px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>🔐 Verification Code</h1>
+                    <p>Two-Factor Authentication</p>
+                </div>
+                <div class="content">
+                    <p>Your verification code for AI Meeting Assistant is:</p>
+                    
+                    <div class="code-box">
+                        <div class="code">{code}</div>
+                        <p style="color: #6b7280; font-size: 14px; margin-top: 10px;">Valid for 10 minutes</p>
+                    </div>
+                    
+                    <p>Enter this code in the application to complete your verification.</p>
+                    
+                    <div class="warning-box">
+                        <strong>⚠️ Security Notice:</strong><br>
+                        Never share this code with anyone. Our team will never ask for your verification code.
+                    </div>
+                    
+                    <p style="font-size: 14px; color: #6b7280;">
+                        If you didn't request this code, please ignore this email or contact support if you're concerned about your account security.
+                    </p>
+                </div>
+                <div class="footer">
+                    <p>AI Meeting Assistant | Secure Authentication</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        text_content = f"""
+        Your verification code for AI Meeting Assistant is: {code}
+        
+        This code is valid for 10 minutes.
+        
+        If you didn't request this code, please ignore this email.
+        
+        Best regards,
+        AI Meeting Assistant Team
+        """
+        
+        message = self._create_message(user_email, subject, html_content, text_content)
+        return self._send_email(message)
+    
+    def send_2fa_enabled_notification(
+        self,
+        user_email: str,
+        user_name: str,
+        method: str
+    ) -> bool:
+        """Send notification when 2FA is enabled"""
+        method_names = {
+            '2fa_email': 'Email',
+            '2fa_sms': 'SMS',
+            '2fa_app': 'Authenticator App'
+        }
+        method_name = method_names.get(method, method)
+        
+        subject = "🔐 Two-Factor Authentication Enabled"
+        
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{ background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }}
+                .content {{ background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .success-box {{ background: #d1fae5; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #10b981; }}
+                .info-box {{ background: #dbeafe; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #3b82f6; }}
+                .footer {{ text-align: center; color: #6b7280; font-size: 12px; margin-top: 30px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>🔐 2FA Enabled Successfully!</h1>
+                    <p>Your account is now more secure</p>
+                </div>
+                <div class="content">
+                    <p>Hi {user_name},</p>
+                    
+                    <div class="success-box">
+                        <h3 style="margin: 0 0 10px 0; color: #059669;">✓ Two-Factor Authentication Active</h3>
+                        <p style="margin: 0; color: #6b7280;">Method: <strong>{method_name}</strong></p>
+                    </div>
+                    
+                    <p>Your account now has an extra layer of security. You'll need to verify your identity with a code each time you log in.</p>
+                    
+                    <div class="info-box">
+                        <strong>💡 What This Means:</strong><br>
+                        • Enhanced account security<br>
+                        • Protection against unauthorized access<br>
+                        • Verification required at each login<br>
+                        • You can change your 2FA method anytime in Settings
+                    </div>
+                    
+                    <p><strong>Didn't enable 2FA?</strong> If you didn't make this change, please contact support immediately.</p>
+                </div>
+                <div class="footer">
+                    <p>AI Meeting Assistant | Account Security</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        text_content = f"""
+        Hi {user_name},
+        
+        Two-Factor Authentication has been successfully enabled on your account.
+        
+        Method: {method_name}
+        
+        Your account now has an extra layer of security. You'll need to verify your identity with a code each time you log in.
+        
+        If you didn't make this change, please contact support immediately.
+        
+        Best regards,
+        AI Meeting Assistant Team
+        """
+        
+        message = self._create_message(user_email, subject, html_content, text_content)
+        return self._send_email(message)
+    
+    def send_data_export_notification(
+        self,
+        user_email: str,
+        user_name: str,
+        download_url: str,
+        expires_in_hours: int = 24
+    ) -> bool:
+        """Send notification with data export download link"""
+        subject = "📦 Your Data Export is Ready"
+        
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }}
+                .content {{ background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .download-box {{ background: white; padding: 30px; border-radius: 8px; margin: 20px 0; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+                .button {{ display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 6px; margin: 20px 0; font-weight: bold; }}
+                .warning-box {{ background: #fef3c7; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #f59e0b; }}
+                .footer {{ text-align: center; color: #6b7280; font-size: 12px; margin-top: 30px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>📦 Data Export Ready!</h1>
+                    <p>Your data is ready to download</p>
+                </div>
+                <div class="content">
+                    <p>Hi {user_name},</p>
+                    <p>Your data export has been prepared and is ready for download.</p>
+                    
+                    <div class="download-box">
+                        <h2 style="margin: 0 0 20px 0;">Your Export Includes:</h2>
+                        <ul style="text-align: left; display: inline-block;">
+                            <li>All meeting transcriptions</li>
+                            <li>Tasks and action items</li>
+                            <li>Timeline events</li>
+                            <li>Calendar sync data</li>
+                            <li>Account information</li>
+                        </ul>
+                        
+                        <a href="{download_url}" class="button">
+                            Download Your Data →
+                        </a>
+                    </div>
+                    
+                    <div class="warning-box">
+                        <strong>⏰ Important:</strong><br>
+                        This download link will expire in {expires_in_hours} hours for security reasons.
+                    </div>
+                    
+                    <p style="font-size: 14px; color: #6b7280;">
+                        The export is in JSON format and includes all your data in a structured, machine-readable format.
+                    </p>
+                </div>
+                <div class="footer">
+                    <p>AI Meeting Assistant | Data Privacy</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        text_content = f"""
+        Hi {user_name},
+        
+        Your data export is ready for download!
+        
+        Your export includes:
+        - All meeting transcriptions
+        - Tasks and action items
+        - Timeline events
+        - Calendar sync data
+        - Account information
+        
+        Download link: {download_url}
+        
+        This link will expire in {expires_in_hours} hours.
+        
+        Best regards,
+        AI Meeting Assistant Team
+        """
+        
+        message = self._create_message(user_email, subject, html_content, text_content)
+        return self._send_email(message)
+    
     def send_weekly_summary(
         self,
         user_email: str,

@@ -1,0 +1,11 @@
+# Additional requirements for 2FA and Enhanced Email Services
+
+# Two-Factor Authentication
+pyotp==2.9.0              # TOTP (Time-based One-Time Password) for authenticator apps
+qrcode==7.4.2             # QR code generation for authenticator app setup
+Pillow==10.1.0            # Image processing for QR codes
+
+# SMS Service
+twilio==8.10.0            # Twilio SDK for SMS 2FA
+
+# Note: Add these to your main requirements.txt file

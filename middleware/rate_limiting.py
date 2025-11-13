@@ -26,7 +26,7 @@ limiter = Limiter(
         "1000 per hour",  # Default rate limit
         "100 per minute"
     ],
-    storage_uri=os.getenv('REDIS_URL', 'memory://'),  # Use Redis if available, fallback to memory
+    storage_uri='memory://',  # Use in-memory storage
     strategy="fixed-window"
 )
 

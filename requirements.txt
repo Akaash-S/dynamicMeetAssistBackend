@@ -33,6 +33,21 @@ python-dotenv==1.0.0
 # Production Server
 gunicorn==21.2.0
 
+# AWS Services
+boto3==1.34.0
+botocore==1.34.0
+
+# Two-Factor Authentication
+pyotp==2.9.0
+qrcode==7.4.2
+Pillow==10.1.0
+
+# SMS Service (Twilio)
+twilio==8.10.0
+
+# Email Service (SendGrid)
+sendgrid==6.11.0
+
 # Additional Production Dependencies
 # For better performance and monitoring
 psutil==5.9.6

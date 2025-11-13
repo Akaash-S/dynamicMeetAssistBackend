@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 
-from config.database import get_db
+from config.aws_rds_database import rds_db
 from middleware.validation import add_security_headers
 def _resolve_db_user_id(raw_user_id: str):
     """Return internal UUID user id. Accepts UUID or Firebase UID string."""
@@ -13,9 +13,9 @@ def _resolve_db_user_id(raw_user_id: str):
         if re.match(uuid_pattern, raw_user_id, re.IGNORECASE):
             return raw_user_id
         # Otherwise treat as firebase_uid and look up users.id
-        row = get_db().execute_query("SELECT id FROM users WHERE firebase_uid = %s", (raw_user_id,))
-        if row and len(row) > 0 and row[0].get('id'):
-            return row[0]['id']
+        row = rds_db.execute_query("SELECT id FROM users WHERE firebase_uid = %s", (raw_user_id,), fetch_one=True)
+        if row and row.get('id'):
+            return row['id']
     except Exception:
         pass
     return None
@@ -123,7 +123,7 @@ def get_meetings():
         LIMIT %s OFFSET %s
         """
 
-        meetings = get_db().execute_query(list_query, (where_param, limit, offset))
+        meetings = rds_db.execute_query(list_query, (where_param, limit, offset), fetch_all=True)
         print(f"📊 Found {len(meetings) if meetings else 0} meetings for user {raw_user_id}")
         
         # Debug: Print meeting IDs to check format
@@ -137,8 +137,8 @@ def get_meetings():
         FROM meetings m
         WHERE {where_sql}
         """
-        count_result = get_db().execute_query(count_query, (where_param,))
-        total_count = count_result[0]['total'] if count_result else 0
+        count_result = rds_db.execute_query(count_query, (where_param,), fetch_one=True)
+        total_count = count_result['total'] if count_result else 0
         
         # Format response
         formatted_meetings = []
@@ -206,10 +206,14 @@ def get_meeting_timeline(meeting_id):
         ORDER BY timestamp_minutes ASC
         """
         
-        result = get_db().execute_query(query, (meeting_id,))
+        result = rds_db.execute_query(query, (meeting_id,), fetch_all=True)
         
-        if result is None:
-            return jsonify({'error': 'Failed to fetch timeline'}), 500
+        if not result:
+            return jsonify({
+                'meeting_id': meeting_id,
+                'timeline': [],
+                'total_entries': 0
+            }), 200
         
         timeline_entries = []
         for row in result:
@@ -257,7 +261,9 @@ def get_meeting(meeting_id):
         GROUP BY m.id
         """
         
-        result = get_db().execute_query(query, (meeting_id,))
+        result = rds_db.execute_query(query, (meeting_id,), fetch_one=True)
+        if not result:
+            return jsonify({"error": "Resource not found"}), 404
         
         if not result:
             return jsonify({'error': 'Meeting not found'}), 404
@@ -288,7 +294,9 @@ def get_meeting_summary(meeting_id):
     """Get summary for a specific meeting"""
     try:
         query = "SELECT summary, title, created_at FROM meetings WHERE id = %s"
-        result = get_db().execute_query(query, (meeting_id,))
+        result = rds_db.execute_query(query, (meeting_id,), fetch_one=True)
+        if not result:
+            return jsonify({"error": "Resource not found"}), 404
         
         if not result:
             return jsonify({'error': 'Meeting not found'}), 404
@@ -322,14 +330,18 @@ def delete_meeting(meeting_id):
     try:
         # Check if meeting exists
         meeting_query = "SELECT audio_url FROM meetings WHERE id = %s"
-        meeting_result = get_db().execute_query(meeting_query, (meeting_id,))
+        meeting_result = rds_db.execute_query(meeting_query, (meeting_id,), fetch_one=True)
+        if not meeting_result:
+            return jsonify({"error": "Resource not found"}), 404
         
         if not meeting_result:
             return jsonify({'error': 'Meeting not found'}), 404
         
         # Delete from database (cascading deletes will handle related tables)
         delete_query = "DELETE FROM meetings WHERE id = %s"
-        deleted_count = get_db().execute_query(delete_query, (meeting_id,))
+        deleted_count = rds_db.execute_query(delete_query, (meeting_id,), fetch_one=True)
+        if not deleted_count:
+            return jsonify({"error": "Resource not found"}), 404
         
         if deleted_count > 0:
             # TODO: Delete audio file from storage
@@ -352,7 +364,9 @@ def reprocess_meeting(meeting_id):
     try:
         # Check if meeting exists and has transcript
         meeting_query = "SELECT transcript, title, audio_url FROM meetings WHERE id = %s"
-        meeting_result = get_db().execute_query(meeting_query, (meeting_id,))
+        meeting_result = rds_db.execute_query(meeting_query, (meeting_id,), fetch_one=True)
+        if not meeting_result:
+            return jsonify({"error": "Resource not found"}), 404
         
         if not meeting_result:
             return jsonify({'error': 'Meeting not found'}), 404
@@ -364,14 +378,14 @@ def reprocess_meeting(meeting_id):
         
         # Update meeting status
         update_query = "UPDATE meetings SET status = %s, updated_at = %s WHERE id = %s"
-        get_db().execute_query(update_query, ('processing', datetime.utcnow(), meeting_id))
+        rds_db.execute_query(update_query, ('processing', datetime.utcnow(), meeting_id))
         
         # Clear existing timeline and tasks
-        get_db().execute_query("DELETE FROM timeline WHERE meeting_id = %s", (meeting_id,))
-        get_db().execute_query("DELETE FROM tasks WHERE meeting_id = %s", (meeting_id,))
+        rds_db.execute_query("DELETE FROM timeline WHERE meeting_id = %s", (meeting_id,), fetch_one=True)
+        rds_db.execute_query("DELETE FROM tasks WHERE meeting_id = %s", (meeting_id,), fetch_one=True)
         
         # Reset processing status
-        get_db().execute_query("DELETE FROM processing_status WHERE meeting_id = %s", (meeting_id,))
+        rds_db.execute_query("DELETE FROM processing_status WHERE meeting_id = %s", (meeting_id,), fetch_one=True)
         
         # Start reprocessing (this would typically be done asynchronously)
         # For now, return success message
@@ -409,8 +423,8 @@ def get_meeting_stats():
         FROM meetings m
         WHERE {where_sql}
         """
-        total_result = get_db().execute_query(total_query, (where_param,))
-        stats['total_meetings'] = total_result[0]['count'] if total_result else 0
+        total_result = rds_db.execute_query(total_query, (where_param,), fetch_one=True)
+        stats['total_meetings'] = total_result['count'] if total_result else 0
         
         # Meetings by status
         status_query = f"""
@@ -419,8 +433,8 @@ def get_meeting_stats():
         WHERE {where_sql}
         GROUP BY status
         """
-        status_result = get_db().execute_query(status_query, (where_param,))
-        stats['by_status'] = {row['status']: row['count'] for row in status_result}
+        status_result = rds_db.execute_query(status_query, (where_param,), fetch_all=True)
+        stats['by_status'] = {row['status']: row['count'] for row in status_result} if status_result else {}
         
         # Total tasks
         tasks_query = f"""
@@ -429,8 +443,8 @@ def get_meeting_stats():
         JOIN meetings m ON t.meeting_id = m.id 
         WHERE {where_sql}
         """
-        tasks_result = get_db().execute_query(tasks_query, (where_param,))
-        stats['total_tasks'] = tasks_result[0]['count'] if tasks_result else 0
+        tasks_result = rds_db.execute_query(tasks_query, (where_param,), fetch_one=True)
+        stats['total_tasks'] = tasks_result['count'] if tasks_result else 0
         
         # Tasks by status
         task_status_query = f"""
@@ -440,8 +454,8 @@ def get_meeting_stats():
         WHERE {where_sql}
         GROUP BY t.status
         """
-        task_status_result = get_db().execute_query(task_status_query, (where_param,))
-        stats['tasks_by_status'] = {row['status']: row['count'] for row in task_status_result}
+        task_status_result = rds_db.execute_query(task_status_query, (where_param,), fetch_all=True)
+        stats['tasks_by_status'] = {row['status']: row['count'] for row in task_status_result} if task_status_result else {}
         
         # Recent activity (last 7 days)
         recent_query = f"""
@@ -449,8 +463,8 @@ def get_meeting_stats():
         FROM meetings m
         WHERE {where_sql} AND m.created_at > NOW() - INTERVAL '7 days'
         """
-        recent_result = get_db().execute_query(recent_query, (where_param,))
-        stats['recent_meetings'] = recent_result[0]['count'] if recent_result else 0
+        recent_result = rds_db.execute_query(recent_query, (where_param,), fetch_one=True)
+        stats['recent_meetings'] = recent_result['count'] if recent_result else 0
         
         # Total duration
         duration_query = f"""
@@ -458,10 +472,10 @@ def get_meeting_stats():
         FROM meetings m
         WHERE {where_sql} AND m.duration IS NOT NULL
         """
-        duration_result = get_db().execute_query(duration_query, (where_param,))
-        total_duration = duration_result[0]['total_duration'] if duration_result and duration_result[0]['total_duration'] else 0
-        stats['total_duration_minutes'] = int(total_duration)
-        stats['total_duration_hours'] = round(total_duration / 60, 2)
+        duration_result = rds_db.execute_query(duration_query, (where_param,), fetch_one=True)
+        total_duration = duration_result['total_duration'] if duration_result and duration_result.get('total_duration') else 0
+        stats['total_duration_minutes'] = int(total_duration) if total_duration else 0
+        stats['total_duration_hours'] = round(total_duration / 60, 2) if total_duration else 0
         
         return jsonify(stats), 200
         

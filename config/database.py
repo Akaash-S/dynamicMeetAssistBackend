@@ -10,9 +10,9 @@ load_dotenv()
 
 class Database:
     def __init__(self):
-        self.connection_string = os.getenv('NEON_DATABASE_URL')
+        self.connection_string = os.getenv('RDS_HOST')
         if not self.connection_string:
-            raise ValueError("NEON_DATABASE_URL environment variable is required")
+            raise ValueError("RDS_HOST environment variable is required")
         
         # Connection pool configuration
         self.min_connections = int(os.getenv('DB_MIN_CONNECTIONS', 1))

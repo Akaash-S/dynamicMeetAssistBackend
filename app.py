@@ -7,6 +7,15 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+# Run automatic AWS setup on startup
+try:
+    from initialize import initialize_backend
+    print("\n🔧 Running automatic AWS setup...")
+    initialize_backend()
+except Exception as e:
+    print(f"⚠️  Warning: Auto-setup failed: {e}")
+    print("   Continuing with manual configuration...")
+
 # Import blueprints
 from routes.auth import auth_bp
 from routes.meetings import meetings_bp
@@ -14,13 +23,14 @@ from routes.tasks import tasks_bp
 from routes.upload import upload_bp
 from routes.health import health_bp
 from routes.google_calendar import google_calendar_bp
+from routes.totp_auth import totp_auth_bp
 
 # Import CORS debug routes (development only)
 if os.getenv('FLASK_ENV') == 'development':
     from routes.cors_debug import cors_debug_bp
 
 # Import database initialization
-from config.database import init_db
+from config.aws_rds_database import init_rds_db
 
 # Import middleware
 from middleware.rate_limiting import limiter
@@ -140,8 +150,8 @@ def create_app():
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
     app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
     
-    # Initialize database
-    init_db()
+    # Initialize RDS database
+    init_rds_db()
     
     # Initialize rate limiter
     limiter.init_app(app)
@@ -233,6 +243,7 @@ def create_app():
     app.register_blueprint(upload_bp, url_prefix='/api/upload')
     app.register_blueprint(health_bp, url_prefix='/api/health/detailed')
     app.register_blueprint(google_calendar_bp, url_prefix='/api/calendar')
+    app.register_blueprint(totp_auth_bp, url_prefix='/api')
     
     # Register admin blueprints
     from routes.admin_auth import admin_auth_bp
