@@ -1,4 +1,4 @@
-import google.generativeai as genai
+from groq import Groq
 import os
 import json
 import re
@@ -6,12 +6,12 @@ from typing import Dict, List, Optional
 
 class AIProcessor:
     def __init__(self):
-        self.api_key = os.getenv('GEMINI_API_KEY')
+        self.api_key = os.getenv('GROQ_API_KEY')
         if not self.api_key:
-            raise ValueError("GEMINI_API_KEY environment variable is required")
+            raise ValueError("GROQ_API_KEY environment variable is required")
         
-        genai.configure(api_key=self.api_key)
-        self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        self.client = Groq(api_key=self.api_key)
+        self.model = "llama-3.3-70b-versatile"
     
     def extract_timeline(self, transcript: str, duration: int = 0) -> Dict:
         """
@@ -51,11 +51,22 @@ class AIProcessor:
             Ensure the JSON is valid and properly formatted.
             """
             
-            print("🤖 Generating timeline with Gemini AI...")
-            response = self.model.generate_content(prompt)
+            print("🤖 Generating timeline with Groq AI...")
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are an expert meeting analyst. Always respond with valid JSON only."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=4096,
+                top_p=1,
+                stream=False
+            )
             
             # Parse the response
-            timeline_data = self._parse_json_response(response.text)
+            response_text = response.choices[0].message.content
+            timeline_data = self._parse_json_response(response_text)
             
             if timeline_data:
                 print(f"✅ Generated {len(timeline_data.get('timeline', []))} timeline entries")
@@ -127,11 +138,22 @@ class AIProcessor:
             Ensure the JSON is valid and properly formatted.
             """
             
-            print("🎯 Extracting tasks with Gemini AI...")
-            response = self.model.generate_content(prompt)
+            print("🎯 Extracting tasks with Groq AI...")
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are an expert task manager. Always respond with valid JSON only."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=4096,
+                top_p=1,
+                stream=False
+            )
             
             # Parse the response
-            tasks_data = self._parse_json_response(response.text)
+            response_text = response.choices[0].message.content
+            tasks_data = self._parse_json_response(response_text)
             
             if tasks_data:
                 print(f"✅ Extracted {len(tasks_data.get('tasks', []))} tasks")
@@ -218,11 +240,22 @@ class AIProcessor:
             Ensure the JSON is valid and properly formatted.
             """
             
-            print("📋 Generating meeting summary with Gemini AI...")
-            response = self.model.generate_content(prompt)
+            print("📋 Generating meeting summary with Groq AI...")
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are an expert meeting summarizer. Always respond with valid JSON only."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=4096,
+                top_p=1,
+                stream=False
+            )
             
             # Parse the response
-            summary_data = self._parse_json_response(response.text)
+            response_text = response.choices[0].message.content
+            summary_data = self._parse_json_response(response_text)
             
             if summary_data:
                 print("✅ Generated comprehensive meeting summary")
@@ -271,13 +304,17 @@ class AIProcessor:
         """Check if AI service is healthy"""
         try:
             # Test API connectivity with a simple prompt
-            test_response = self.model.generate_content("Hello, respond with 'OK' if you're working.")
+            test_response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": "Hello, respond with 'OK' if you're working."}],
+                max_tokens=10
+            )
             
             return {
                 'service': 'ai_processor',
-                'status': 'healthy' if test_response.text else 'unhealthy',
+                'status': 'healthy' if test_response.choices[0].message.content else 'unhealthy',
                 'api_key_configured': bool(self.api_key),
-                'model': 'gemini-2.0-flash-exp'
+                'model': self.model
             }
             
         except Exception as e:

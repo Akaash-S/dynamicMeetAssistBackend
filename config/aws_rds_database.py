@@ -19,10 +19,13 @@ class RDSDatabase:
     def __init__(self):
         self.db_host = os.getenv('RDS_HOST')
         self.db_port = os.getenv('RDS_PORT', '5432')
-        self.db_name = os.getenv('RDS_DATABASE')
+        self.db_name = os.getenv('RDS_DATABASE') or os.getenv('RDS_DB_NAME')
         self.db_user = os.getenv('RDS_USER')
         self.db_password = os.getenv('RDS_PASSWORD')
         self.db_ssl_mode = os.getenv('RDS_SSL_MODE', 'prefer')
+        
+        # Debug: Print what we loaded
+        logger.info(f"🔍 RDS Config: host={self.db_host}, port={self.db_port}, db={self.db_name}, user={self.db_user}")
         
         # Connection pool settings
         self.min_connections = int(os.getenv('DB_POOL_MIN', '2'))

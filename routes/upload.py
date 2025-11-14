@@ -63,37 +63,10 @@ def upload_audio():
             print(f"❌ User ID validation failed: {user_error}")
             return jsonify({'error': f'User ID validation failed: {str(user_error)}'}), 400
         
-        # Check if storage service is properly initialized
-        if not storage or not hasattr(storage, 'client') or storage.client is None:
-            print("❌ Storage service not properly initialized - check SUPABASE_URL and SUPABASE_KEY")
+        # Check if S3 service is properly initialized
+        if not s3_service:
+            print("❌ S3 service not properly initialized - check AWS credentials")
             return jsonify({'error': 'Storage service not available. Please check server configuration.'}), 500
-        
-        # Test storage connection before attempting upload
-        print("🔍 Testing storage connection...")
-        try:
-            if not storage.test_connection():
-                print("❌ Storage connection test failed")
-                return jsonify({
-                    'error': 'Cannot connect to storage service. This may be due to:\n' +
-                             '• Network connectivity issues\n' +
-                             '• Incorrect SUPABASE_URL or SUPABASE_KEY configuration\n' +
-                             '• Firewall blocking the connection\n' +
-                             'Please check your internet connection and server configuration.'
-                }), 500
-        except Exception as conn_test_error:
-            print(f"❌ Storage connection test error: {conn_test_error}")
-            error_message = str(conn_test_error)
-            if "getaddrinfo failed" in error_message:
-                return jsonify({
-                    'error': 'Network connectivity issue detected. Please check:\n' +
-                             '• Your internet connection\n' +
-                             '• SUPABASE_URL configuration\n' +
-                             '• Firewall settings'
-                }), 500
-            else:
-                return jsonify({
-                    'error': f'Storage service connection failed: {error_message}'
-                }), 500
         
         meeting_title = request.form.get('title', 'Untitled Meeting')
         
@@ -117,18 +90,33 @@ def upload_audio():
         
         print(f"📁 Uploading file: {file_info['original_filename']} ({len(file_data)} bytes read, expected {file_info['file_size']} bytes)")
         
-        # Upload to Supabase Storage
+        # Upload to AWS S3
         try:
-            audio_url = storage.upload_file(
-                file_path=unique_filename,
-                file_data=file_data,
+            # Create a file-like object from the bytes data
+            from io import BytesIO
+            file_obj = BytesIO(file_data)
+            
+            # Upload to S3 and get the S3 key
+            s3_key = s3_service.upload_file(
+                file_obj=file_obj,
+                file_name=file_info['original_filename'],
+                folder=f'meetings/{user_id}',
                 content_type=f'audio/{file_info["file_extension"]}'
             )
             
-            if not audio_url:
-                print(f"❌ Storage upload returned None for file: {unique_filename}")
+            if not s3_key:
+                print(f"❌ S3 upload returned None for file: {file_info['original_filename']}")
                 return jsonify({
                     'error': 'Failed to upload file to storage. This may be due to network connectivity issues or server configuration problems.'
+                }), 500
+            
+            # Generate presigned URL for accessing the file
+            audio_url = s3_service.generate_presigned_url(s3_key, expiration=86400)  # 24 hours
+            
+            if not audio_url:
+                print(f"❌ Failed to generate presigned URL for: {s3_key}")
+                return jsonify({
+                    'error': 'Failed to generate access URL for uploaded file.'
                 }), 500
                 
         except Exception as storage_error:
@@ -156,9 +144,12 @@ def upload_audio():
         
         # Test database connection before proceeding
         try:
-            if not rds_db.test_connection():
+            # Simple query to test connection
+            test_result = rds_db.execute_query("SELECT 1 as test", fetch_one=True)
+            if not test_result:
                 print("❌ Database connection test failed")
                 return jsonify({'error': 'Database connection failed'}), 500
+            print("✅ Database connection verified")
         except Exception as db_test_error:
             print(f"❌ Database connection test error: {db_test_error}")
             return jsonify({'error': f'Database connection error: {str(db_test_error)}'}), 500
