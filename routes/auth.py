@@ -80,32 +80,29 @@ def verify_user():
             return jsonify({'error': 'Either firebase_uid or google_oauth_id is required'}), 400
         
         # Check if user already exists (unless force_create is True)
+        # OPTIMIZED: Single query with OR conditions instead of multiple queries
         existing_user = None
         if not force_create:
-            # Strategy 1: Look for exact email match first (most reliable)
-            email_query = "SELECT * FROM users WHERE email = %s"
-            email_result = rds_db.execute_query(email_query, [email], fetch_all=True)
+            # Build a single query with all possible identifiers
+            conditions = ["email = %s"]
+            params = [email]
             
-            if email_result:
-                existing_user = email_result
-                print(f'Backend: Found existing user by email: {email}')
+            if firebase_uid:
+                conditions.append("firebase_uid = %s")
+                params.append(firebase_uid)
+            
+            if google_oauth_id:
+                conditions.append("google_oauth_id = %s")
+                params.append(google_oauth_id)
+            
+            # Single optimized query
+            lookup_query = f"SELECT * FROM users WHERE {' OR '.join(conditions)} LIMIT 1"
+            existing_user = rds_db.execute_query(lookup_query, params, fetch_all=True)
+            
+            if existing_user:
+                print(f'Backend: Found existing user: {email}')
             else:
-                # Strategy 2: Look by auth identifiers only if no email match
-                auth_queries = []
-                
-                if firebase_uid:
-                    firebase_result = rds_db.execute_query("SELECT * FROM users WHERE firebase_uid = %s", [firebase_uid], fetch_all=True)
-                    if firebase_result:
-                        existing_user = firebase_result
-                        print(f'Backend: Found existing user by firebase_uid: {firebase_uid}')
-                
-                if not existing_user and google_oauth_id:
-                    google_result = rds_db.execute_query("SELECT * FROM users WHERE google_oauth_id = %s", [google_oauth_id], fetch_all=True)
-                    if google_result:
-                        existing_user = google_result
-                        print(f'Backend: Found existing user by google_oauth_id: {google_oauth_id}')
-            
-            print(f'Backend: User lookup result - email: {email}, found: {len(existing_user) if existing_user else 0} users')
+                print(f'Backend: No existing user found for: {email}')
         else:
             print('Backend: force_create=True, skipping existing user check')
         
