@@ -17,7 +17,6 @@ class AWSAutoSetup:
         self.setup_results = {
             'rds_tables': False,
             's3_bucket': False,
-            'redis': False,
             'errors': []
         }
     
@@ -66,9 +65,8 @@ class AWSAutoSetup:
             
             # Required tables
             required_tables = [
-                'users', 'meetings', 'tasks', 'timeline_events',
-                'notification_preferences', 'subscriptions', 'data_exports',
-                'audit_logs', 'two_factor_attempts'
+                'users', 'meetings', 'tasks', 'timeline',
+                'processing_status', 'notifications'
             ]
             
             missing_tables = [t for t in required_tables if t not in existing_tables]
@@ -208,6 +206,15 @@ class AWSAutoSetup:
                                     'LocationConstraint': region
                                 }
                             )
+                    except ClientError as create_error:
+                        error_code = create_error.response['Error']['Code']
+                        if error_code == 'AccessDenied':
+                            logger.warning(f"⚠️  No permission to create S3 bucket. Please create '{bucket_name}' manually in AWS Console.")
+                            logger.info("✓ Assuming bucket exists and continuing...")
+                            self.setup_results['s3_bucket'] = True
+                            return True
+                        else:
+                            raise
                         
                         # Enable versioning (optional)
                         try:

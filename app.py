@@ -248,11 +248,12 @@ def create_app():
     app.register_blueprint(notifications_bp, url_prefix='/api/notifications')
     
     # Register admin blueprints
-    from routes.admin_auth import admin_auth_bp
-    from routes.admin_users import admin_users_bp
-    from routes.admin_issues import admin_issues_bp
-    from routes.admin_payments import admin_payments_bp
-    from routes.admin_notifications import admin_notifications_bp
+    from admin.routes.admin_auth import admin_auth_bp
+    from admin.routes.admin_users import admin_users_bp
+    from admin.routes.admin_issues import admin_issues_bp
+    from admin.routes.admin_payments import admin_payments_bp
+    from admin.routes.admin_notifications import admin_notifications_bp
+
     
     app.register_blueprint(admin_auth_bp, url_prefix='/api/admin/auth')
     app.register_blueprint(admin_users_bp, url_prefix='/api/admin/users')
