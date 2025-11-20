@@ -97,7 +97,8 @@ def verify_user():
             
             # Single optimized query
             lookup_query = f"SELECT * FROM users WHERE {' OR '.join(conditions)} LIMIT 1"
-            existing_user = rds_db.execute_query(lookup_query, params, fetch_all=True)
+            result = rds_db.execute_query(lookup_query, tuple(params), fetch_all=True)
+            existing_user = result[0] if result and len(result) > 0 else None
             
             if existing_user:
                 print(f'Backend: Found existing user: {email}')
@@ -105,11 +106,14 @@ def verify_user():
                 print(f'Backend: No existing user found for: {email}')
         else:
             print('Backend: force_create=True, skipping existing user check')
+            existing_user = None
         
         if existing_user and not force_create:
             # Update existing user
             print('Backend: Existing user found, updating user.')
-            user = existing_user[0]
+            user = existing_user
+            print(f"🔍 User object type: {type(user)}")
+            print(f"🔍 User keys: {user.keys() if hasattr(user, 'keys') else 'N/A'}")
             
             # Security: Prevent regular users from accessing admin accounts
             if user.get('role') == 'admin':
@@ -118,54 +122,85 @@ def verify_user():
                     'message': 'Please use the admin dashboard to log in'
                 }), 403
             
-            update_query = """
-            UPDATE users 
-            SET email = %s, name = %s, auth_provider = %s, updated_at = %s
-            """
-            params = [email, name or user['name'], auth_provider, datetime.utcnow()]
-            
-            # Update auth-specific fields
-            if firebase_uid and auth_provider == 'firebase':
-                update_query += ", firebase_uid = %s"
-                params.append(firebase_uid)
-            elif google_oauth_id and auth_provider == 'google_oauth':
-                update_query += ", google_oauth_id = %s"
-                params.append(google_oauth_id)
+            try:
+                update_query = """
+                UPDATE users 
+                SET email = %s, name = %s, auth_provider = %s, updated_at = %s
+                """
+                params = [email, name or user['name'], auth_provider, datetime.utcnow()]
                 
-            # Add Google OAuth tokens if provided
-            if data.get('google_access_token'):
-                update_query += ", google_access_token = %s"
-                params.append(data['google_access_token'])
-            if data.get('google_refresh_token'):
-                update_query += ", google_refresh_token = %s"
-                params.append(data['google_refresh_token'])
-            if data.get('google_token_expires_at'):
-                update_query += ", google_token_expires_at = %s"
-                params.append(data['google_token_expires_at'])
-            if data.get('google_calendar_enabled') is not None:
-                update_query += ", google_calendar_enabled = %s"
-                params.append(data['google_calendar_enabled'])
+                # Update auth-specific fields
+                if firebase_uid:
+                    update_query += ", firebase_uid = %s"
+                    params.append(firebase_uid)
+                if google_oauth_id:
+                    update_query += ", google_oauth_id = %s"
+                    params.append(google_oauth_id)
+                    
+                # Add Google OAuth tokens if provided
+                if data.get('google_access_token'):
+                    update_query += ", google_access_token = %s"
+                    params.append(data['google_access_token'])
+                if data.get('google_refresh_token'):
+                    update_query += ", google_refresh_token = %s"
+                    params.append(data['google_refresh_token'])
+                if data.get('google_token_expires_at'):
+                    update_query += ", google_token_expires_at = %s"
+                    params.append(data['google_token_expires_at'])
+                if data.get('google_calendar_enabled') is not None:
+                    update_query += ", google_calendar_enabled = %s"
+                    params.append(data['google_calendar_enabled'])
+                
+                update_query += " WHERE id = %s"
+                user_id = user.get('id') if hasattr(user, 'get') else user['id']
+                params.append(user_id)
+                
+                print(f"🔍 UPDATE query: {update_query}")
+                print(f"🔍 UPDATE params (count: {len(params)}): {[type(p).__name__ for p in params]}")
+                
+                rds_db.execute_query(update_query, tuple(params))
+                print('Backend: User updated successfully.')
+            except Exception as update_error:
+                print(f"❌ Error updating user: {update_error}")
+                import traceback
+                print(traceback.format_exc())
+                return jsonify({'error': f'Failed to update user: {str(update_error)}'}), 500
             
-            update_query += " WHERE id = %s"
-            params.append(user['id'])
-            
-            rds_db.execute_query(update_query, params)
-            print('Backend: User updated successfully.')
-            
-            return jsonify({
-                'success': True,
-                'user': {
-                    'id': user['id'],
-                    'firebase_uid': firebase_uid or user.get('firebase_uid'),
-                    'google_oauth_id': google_oauth_id or user.get('google_oauth_id'),
-                    'email': email,
-                    'name': name or user['name'],
-                    'auth_provider': auth_provider,
-                    'google_calendar_enabled': user.get('google_calendar_enabled', False),
-                    'created_at': user['created_at'].isoformat() if user['created_at'] else None
-                },
-                'is_new_user': False
-            }), 200
+            # Format created_at properly
+            try:
+                created_at_str = None
+                if user.get('created_at'):
+                    if hasattr(user['created_at'], 'isoformat'):
+                        created_at_str = user['created_at'].isoformat()
+                    else:
+                        created_at_str = str(user['created_at'])
+                
+                user_id_value = user.get('id') if hasattr(user, 'get') else user['id']
+                print(f"✅ Preparing response for user: {user_id_value}")
+                
+                response_data = {
+                    'success': True,
+                    'user': {
+                        'id': str(user_id_value),
+                        'firebase_uid': firebase_uid or user.get('firebase_uid'),
+                        'google_oauth_id': google_oauth_id or user.get('google_oauth_id'),
+                        'email': email,
+                        'name': name or user['name'],
+                        'auth_provider': auth_provider,
+                        'google_calendar_enabled': data.get('google_calendar_enabled', user.get('google_calendar_enabled', False)),
+                        'created_at': created_at_str
+                    },
+                    'is_new_user': False
+                }
+                
+                print(f"✅ Response data prepared successfully")
+                return jsonify(response_data), 200
+                
+            except Exception as response_error:
+                print(f"❌ Error preparing response: {response_error}")
+                import traceback
+                print(traceback.format_exc())
+                return jsonify({'error': f'Failed to prepare response: {str(response_error)}'}), 500
         else:
             # Create new user - CLIENT APP (role='user' by default)
             print("✅ No existing user found. Creating new CLIENT user.")
