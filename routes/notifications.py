@@ -1,11 +1,25 @@
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 import uuid
+import asyncio
+from functools import wraps
 
 from config.aws_rds_database import rds_db
 from middleware.validation import add_security_headers
 
 notifications_bp = Blueprint('notifications', __name__)
+
+def async_route(f):
+    """Decorator to run async functions in Flask routes"""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(f(*args, **kwargs))
+        finally:
+            loop.close()
+    return wrapper
 
 def _resolve_db_user_id(raw_user_id: str):
     """Return internal UUID user id. Accepts UUID or Firebase UID string."""
@@ -25,7 +39,8 @@ def _resolve_db_user_id(raw_user_id: str):
 
 @notifications_bp.route('', methods=['GET'])
 @add_security_headers()
-def get_notifications():
+@async_route
+async def get_notifications():
     """Get notifications for a user"""
     try:
         raw_user_id = request.args.get('user_id')
@@ -84,7 +99,8 @@ def get_notifications():
 
 @notifications_bp.route('/<notification_id>/read', methods=['PUT'])
 @add_security_headers()
-def mark_notification_read(notification_id):
+@async_route
+async def mark_notification_read(notification_id):
     """Mark a notification as read"""
     try:
         update_query = """
@@ -105,7 +121,8 @@ def mark_notification_read(notification_id):
 
 @notifications_bp.route('/mark-all-read', methods=['PUT'])
 @add_security_headers()
-def mark_all_read():
+@async_route
+async def mark_all_read():
     """Mark all notifications as read for a user"""
     try:
         raw_user_id = request.args.get('user_id')
@@ -134,7 +151,8 @@ def mark_all_read():
 
 @notifications_bp.route('/<notification_id>', methods=['DELETE'])
 @add_security_headers()
-def delete_notification(notification_id):
+@async_route
+async def delete_notification(notification_id):
     """Delete a notification"""
     try:
         delete_query = "DELETE FROM notifications WHERE id = %s"
@@ -148,9 +166,9 @@ def delete_notification(notification_id):
     except Exception as e:
         return jsonify({'error': f'Failed to delete notification: {str(e)}'}), 500
 
-def create_notification(user_id: str, notification_type: str, title: str, message: str, data: dict = None):
+async def create_notification_async(user_id: str, notification_type: str, title: str, message: str, data: dict = None):
     """
-    Helper function to create a notification
+    Async helper function to create a notification
     
     Types:
     - meeting_completed: Meeting processing completed
@@ -169,20 +187,49 @@ def create_notification(user_id: str, notification_type: str, title: str, messag
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
         
-        rds_db.execute_query(insert_query, (
-            notification_id,
-            user_id,
-            notification_type,
-            title,
-            message,
-            data,
-            False,
-            datetime.utcnow()
-        ))
+        import json
+        data_json = json.dumps(data) if data else None
+        
+        # Run database insert in executor
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            rds_db.execute_query,
+            insert_query,
+            (notification_id, user_id, notification_type, title, message, data_json, False, datetime.utcnow())
+        )
         
         print(f"✅ Created notification: {notification_type} for user {user_id}")
+        
+        # Send email notification asynchronously (fire and forget)
+        try:
+            from utils.notification_email_sender import send_notification_email_async
+            asyncio.create_task(send_notification_email_async(notification_id, user_id))
+            print(f"📧 Email notification queued for {notification_type}")
+        except Exception as email_error:
+            print(f"⚠️  Failed to queue email notification: {email_error}")
+            # Don't fail the notification creation if email fails
+        
         return notification_id
         
+    except Exception as e:
+        print(f"❌ Failed to create notification: {e}")
+        return None
+
+def create_notification(user_id: str, notification_type: str, title: str, message: str, data: dict = None):
+    """
+    Synchronous wrapper for create_notification_async
+    For backward compatibility with existing code
+    """
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(
+                create_notification_async(user_id, notification_type, title, message, data)
+            )
+        finally:
+            loop.close()
     except Exception as e:
         print(f"❌ Failed to create notification: {e}")
         return None

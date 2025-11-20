@@ -7,6 +7,8 @@ from flask import Blueprint, request, jsonify
 from datetime import datetime, timedelta
 import uuid
 import logging
+import asyncio
+from functools import wraps
 from config.aws_rds_database import rds_db
 from config.auth_config import AuthConfig
 from middleware.validation import require_admin_auth, add_security_headers, validate_json
@@ -17,10 +19,23 @@ logger = logging.getLogger(__name__)
 
 admin_notifications_bp = Blueprint('admin_notifications', __name__)
 
+def async_route(f):
+    """Decorator to run async functions in Flask routes"""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(f(*args, **kwargs))
+        finally:
+            loop.close()
+    return wrapper
+
 @admin_notifications_bp.route('', methods=['GET'])
 @add_security_headers
 @require_admin_auth
-def get_notifications():
+@async_route
+async def get_notifications():
     """
     Get paginated list of notifications with filtering
     GET /api/admin/notifications%spage=1&per_page=20&type=&priority=&is_read=
@@ -150,7 +165,8 @@ def get_notifications():
 @admin_notifications_bp.route('/stats', methods=['GET'])
 @add_security_headers
 @require_admin_auth
-def get_notification_stats():
+@async_route
+async def get_notification_stats():
     """
     Get notification statistics and analytics
     GET /api/admin/notifications/stats
@@ -224,7 +240,8 @@ def get_notification_stats():
 @add_security_headers
 @require_admin_auth
 @validate_json('message')
-def create_notification():
+@async_route
+async def create_notification():
     """
     Create a new notification
     POST /api/admin/notifications
@@ -264,6 +281,15 @@ def create_notification():
             request.remote_addr, request.headers.get('User-Agent')
         )
         
+        # Send email notification if target user is specified
+        if data.get('target_user_id'):
+            try:
+                from utils.notification_email_sender import send_notification_email_async
+                asyncio.create_task(send_notification_email_async(notification_id, data['target_user_id']))
+                logger.info(f"Email notification queued for user {data['target_user_id']}")
+            except Exception as email_error:
+                logger.warning(f"Failed to queue email notification: {email_error}")
+        
         return jsonify({
             'success': True,
             'message': 'Notification created successfully',
@@ -281,7 +307,8 @@ def create_notification():
 @admin_notifications_bp.route('/<notification_id>', methods=['PATCH'])
 @add_security_headers
 @require_admin_auth
-def update_notification(notification_id):
+@async_route
+async def update_notification(notification_id):
     """
     Update notification details
     PATCH /api/admin/notifications/{notification_id}
@@ -347,7 +374,8 @@ def update_notification(notification_id):
 @admin_notifications_bp.route('/<notification_id>', methods=['DELETE'])
 @add_security_headers
 @require_admin_auth
-def delete_notification(notification_id):
+@async_route
+async def delete_notification(notification_id):
     """
     Delete a notification
     DELETE /api/admin/notifications/{notification_id}
@@ -396,7 +424,8 @@ def delete_notification(notification_id):
 @add_security_headers
 @require_admin_auth
 @validate_json('message')
-def broadcast_notification():
+@async_route
+async def broadcast_notification():
     """
     Send a broadcast notification to all users
     POST /api/admin/notifications/broadcast
@@ -435,6 +464,25 @@ def broadcast_notification():
             request.remote_addr, request.headers.get('User-Agent')
         )
         
+        # Send broadcast email to all users with email notifications enabled
+        try:
+            users_query = """
+            SELECT id, email, name 
+            FROM users 
+            WHERE email_notifications = true AND email IS NOT NULL
+            """
+            users = rds_db.execute_query(users_query)
+            
+            if users:
+                from utils.notification_email_sender import send_notification_email_async
+                # Send emails asynchronously to all users
+                for user in users:
+                    asyncio.create_task(send_notification_email_async(notification_id, user['id']))
+                
+                logger.info(f"Broadcast email queued for {len(users)} users")
+        except Exception as email_error:
+            logger.warning(f"Failed to queue broadcast emails: {email_error}")
+        
         return jsonify({
             'success': True,
             'message': 'Broadcast notification sent successfully',
@@ -452,7 +500,8 @@ def broadcast_notification():
 @admin_notifications_bp.route('/mark-all-read', methods=['PATCH'])
 @add_security_headers
 @require_admin_auth
-def mark_all_read():
+@async_route
+async def mark_all_read():
     """
     Mark all notifications as read
     PATCH /api/admin/notifications/mark-all-read
@@ -488,7 +537,8 @@ def mark_all_read():
 @admin_notifications_bp.route('/templates', methods=['GET'])
 @add_security_headers
 @require_admin_auth
-def get_notification_templates():
+@async_route
+async def get_notification_templates():
     """
     Get notification templates for common messages
     GET /api/admin/notifications/templates
