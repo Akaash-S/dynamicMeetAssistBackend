@@ -7,7 +7,10 @@ from flask import Blueprint, request, jsonify
 from config.aws_rds_database import rds_db
 from config.auth_config import AuthConfig
 from middleware.validation import RequestValidator, require_admin_auth, add_security_headers, validate_json
-from routes.admin_auth import log_admin_action
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from admin.utils import log_admin_action
 from datetime import datetime
 import logging
 import uuid
@@ -76,8 +79,8 @@ async def get_users():
             count_query += where_clause
         
         # Get total count
-        total_result = rds_db.execute_query(count_query, params)
-        total = total_result[0]['total'] if total_result else 0
+        total_result = rds_db.execute_query(count_query, tuple(params), fetch_one=True)
+        total = total_result['total'] if total_result else 0
         
         # Calculate pagination
         offset = (page - 1) * per_page
@@ -88,7 +91,7 @@ async def get_users():
         params.extend([per_page, offset])
         
         # Execute query
-        users = rds_db.execute_query(base_query, params)
+        users = rds_db.execute_query(base_query, tuple(params), fetch_all=True)
         
         # Get user statistics
         stats_query = """
@@ -99,8 +102,8 @@ async def get_users():
             COUNT(CASE WHEN created_at >= NOW() - INTERVAL '7 days' THEN 1 END) as new_users_this_week
         FROM users
         """
-        stats_result = rds_db.execute_query(stats_query)
-        stats = stats_result[0] if stats_result else {}
+        stats_result = rds_db.execute_query(stats_query, fetch_one=True)
+        stats = stats_result if stats_result else {}
         
         # Format user data
         formatted_users = []
@@ -182,7 +185,7 @@ async def get_user_details(user_id):
         user_stats = {}
         for stat_name, query in stats_queries.items():
             result = rds_db.execute_query(query, (user_id,), fetch_one=True)
-            user_stats[f'total_{stat_name}'] = result[0]['count'] if result else 0
+            user_stats[f'total_{stat_name}'] = result['count'] if result else 0
         
         # Format user data
         user_data = {
@@ -437,8 +440,8 @@ async def get_user_stats():
         FROM users
         """
         
-        overview_result = rds_db.execute_query(overview_query)
-        overview = overview_result[0] if overview_result else {}
+        overview_result = rds_db.execute_query(overview_query, fetch_one=True)
+        overview = overview_result if overview_result else {}
         
         # Auth provider breakdown
         auth_provider_query = """
@@ -447,8 +450,8 @@ async def get_user_stats():
         GROUP BY auth_provider
         """
         
-        auth_provider_result = rds_db.execute_query(auth_provider_query)
-        auth_provider_breakdown = {row['auth_provider']: row['count'] for row in auth_provider_result}
+        auth_provider_result = rds_db.execute_query(auth_provider_query, fetch_all=True)
+        auth_provider_breakdown = {row['auth_provider']: row['count'] for row in (auth_provider_result or [])}
         
         # Registration trends (last 30 days)
         trends_query = """
@@ -461,7 +464,7 @@ async def get_user_stats():
         ORDER BY date
         """
         
-        trends_result = rds_db.execute_query(trends_query)
+        trends_result = rds_db.execute_query(trends_query, fetch_all=True)
         registration_trends = [
             {
                 'date': row['date'].isoformat(),

@@ -7,7 +7,10 @@ from flask import Blueprint, request, jsonify
 from config.aws_rds_database import rds_db
 from config.auth_config import AuthConfig
 from middleware.validation import RequestValidator, require_admin_auth, add_security_headers, validate_json
-from routes.admin_auth import log_admin_action
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from admin.utils import log_admin_action
 from datetime import datetime
 import logging
 import uuid
@@ -84,8 +87,8 @@ async def get_issues():
             count_query += where_clause
         
         # Get total count
-        total_result = rds_db.execute_query(count_query, params)
-        total = total_result[0]['total'] if total_result else 0
+        total_result = rds_db.execute_query(count_query, tuple(params), fetch_one=True)
+        total = total_result['total'] if total_result else 0
         
         # Calculate pagination
         offset = (page - 1) * per_page
@@ -96,7 +99,7 @@ async def get_issues():
         params.extend([per_page, offset])
         
         # Execute query
-        issues = rds_db.execute_query(base_query, params)
+        issues = rds_db.execute_query(base_query, tuple(params), fetch_all=True)
         
         # Get issue statistics
         stats_query = """
@@ -110,8 +113,8 @@ async def get_issues():
         FROM admin_issues
         """
         
-        stats_result = rds_db.execute_query(stats_query)
-        stats = stats_result[0] if stats_result else {}
+        stats_result = rds_db.execute_query(stats_query, fetch_one=True)
+        stats = stats_result if stats_result else {}
         
         # Format issue data
         formatted_issues = []
@@ -179,12 +182,10 @@ async def report_issue():
         
         # Get user by email or create a guest entry
         user_query = "SELECT id FROM users WHERE email = %s"
-        users = rds_db.execute_query(user_query, (data['user_email'],), fetch_one=True)
-        if not users:
-            return jsonify({"error": "Resource not found"}), 404
+        user = rds_db.execute_query(user_query, (data['user_email'],), fetch_one=True)
         
-        if users:
-            user_id = users[0]['id']
+        if user:
+            user_id = user['id']
         else:
             # For guest users reporting issues, we'll still create the issue
             # but mark it as from an unregistered user
@@ -241,17 +242,14 @@ async def create_issue():
         
         # Get user by email
         user_query = "SELECT id FROM users WHERE email = %s"
-        users = rds_db.execute_query(user_query, (data['user_email'],), fetch_one=True)
-        if not users:
-            return jsonify({"error": "Resource not found"}), 404
-        
-        if not users:
+        user = rds_db.execute_query(user_query, (data['user_email'],), fetch_one=True)
+        if not user:
             return jsonify({
                 'success': False,
                 'message': 'User not found'
             }), 404
         
-        user_id = users[0]['id']
+        user_id = user['id']
         
         # Create issue
         issue_id = str(uuid.uuid4())
@@ -438,7 +436,7 @@ async def get_issue_stats():
         week_start = now - timedelta(days=7)
         
         overview_result = rds_db.execute_query(overview_query, (week_start,), fetch_one=True)
-        overview = overview_result[0] if overview_result else {}
+        overview = overview_result if overview_result else {}
         
         # Category breakdown
         category_query = """
@@ -448,13 +446,13 @@ async def get_issue_stats():
         ORDER BY count DESC
         """
         
-        category_result = rds_db.execute_query(category_query)
+        category_result = rds_db.execute_query(category_query, fetch_all=True)
         category_breakdown = [
             {
                 'category': row['category'],
                 'count': row['count']
             }
-            for row in category_result
+            for row in (category_result or [])
         ]
         
         # Priority breakdown
@@ -471,13 +469,13 @@ async def get_issue_stats():
             END
         """
         
-        priority_result = rds_db.execute_query(priority_query)
+        priority_result = rds_db.execute_query(priority_query, fetch_all=True)
         priority_breakdown = [
             {
                 'priority': row['priority'],
                 'count': row['count']
             }
-            for row in priority_result
+            for row in (priority_result or [])
         ]
         
         return jsonify({

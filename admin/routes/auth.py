@@ -41,6 +41,32 @@ logger = logging.getLogger(__name__)
 
 admin_auth_bp = Blueprint('admin_auth', __name__)
 
+# Helper function for logging
+def log_admin_action(admin_email: str, action: str, resource_type: str = None, 
+                    resource_id: str = None, details: str = None):
+    """Log admin action to database"""
+    try:
+        from flask import request
+        from config.aws_rds_database import rds_db
+        from datetime import datetime
+        
+        ip_address = request.remote_addr if request else None
+        user_agent = request.headers.get('User-Agent') if request else None
+        
+        log_query = """
+        INSERT INTO admin_logs (admin_email, action, resource_type, resource_id, details, ip_address, user_agent, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        
+        rds_db.execute_query(log_query, (
+            admin_email, action, resource_type, resource_id, details,
+            ip_address, user_agent, datetime.utcnow()
+        ))
+        
+        logger.info(f"Admin action logged: {admin_email} - {action}")
+    except Exception as e:
+        logger.error(f"Failed to log admin action: {e}")
+
 def async_route(f):
     """Decorator to run async functions in Flask routes"""
     @wraps(f)
@@ -62,8 +88,10 @@ async def admin_login():
     Admin login with email and password
     POST /api/admin/auth/login
     """
+    print("[DEBUG] Admin login route called!")
     try:
         data = request.get_json()
+        print(f"[DEBUG] Login data: {data}")
         
         email = RequestValidator.sanitize_string(data.get('email', '')).lower()
         password = data.get('password', '')
@@ -82,14 +110,15 @@ async def admin_login():
             }), 400
 
         # Check if it's the default admin from environment
+        print(f"[DEBUG] Checking default admin: {email}")
+        print(f"[DEBUG] DEFAULT_ADMIN_EMAIL: {AuthConfig.DEFAULT_ADMIN_EMAIL}")
+        print(f"[DEBUG] is_default_admin result: {AuthConfig.is_default_admin(email, password)}")
         if AuthConfig.is_default_admin(email, password):
             # Find or create default admin user
             user_query = "SELECT * FROM users WHERE email = %s"
-            users = rds_db.execute_query(user_query, (email,), fetch_one=True)
-            if not users:
-                return jsonify({"error": "Resource not found"}), 404
+            user = rds_db.execute_query(user_query, (email,), fetch_one=True)
             
-            if not users:
+            if not user:
                 # Create default admin user
                 user_id = str(uuid.uuid4())
                 create_user_query = """
@@ -102,26 +131,23 @@ async def admin_login():
                 ))
                 
                 # Fetch the created user
-                users = rds_db.execute_query(user_query, (email,), fetch_one=True)
-                if not users:
-                    return jsonify({"error": "Resource not found"}), 404
+                user = rds_db.execute_query(user_query, (email,), fetch_one=True)
+                if not user:
+                    return jsonify({
+                        'success': False,
+                        'message': 'Failed to create admin user'
+                    }), 500
                 logger.info(f"Created default admin user: {email}")
-            
-            user = users[0]
         else:
             # Check database for user with password hash
             user_query = "SELECT * FROM users WHERE email = %s AND password_hash IS NOT NULL"
-            users = rds_db.execute_query(user_query, (email,), fetch_one=True)
-            if not users:
-                return jsonify({"error": "Resource not found"}), 404
+            user = rds_db.execute_query(user_query, (email,), fetch_one=True)
             
-            if not users:
+            if not user:
                 return jsonify({
                     'success': False,
                     'message': 'Invalid email or password'
                 }), 401
-            
-            user = users[0]
             
             if not AuthConfig.verify_password(password, user['password_hash']):
                 return jsonify({
@@ -222,17 +248,13 @@ async def verify_admin_token():
 
         # Get user from database
         user_query = "SELECT * FROM users WHERE id = %s"
-        users = rds_db.execute_query(user_query, (payload['user_id'],), fetch_one=True)
-        if not users:
-            return jsonify({"error": "Resource not found"}), 404
+        user = rds_db.execute_query(user_query, (payload['user_id'],), fetch_one=True)
         
-        if not users:
+        if not user:
             return jsonify({
                 'success': False,
                 'message': 'User not found'
             }), 404
-
-        user = users[0]
 
         # Check if user is still admin
         if user['role'] != 'admin':

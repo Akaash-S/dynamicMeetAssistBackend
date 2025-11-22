@@ -83,8 +83,8 @@ async def get_payments():
             params.extend([search_param, search_param, search_param])
         
         # Get total count
-        total_result = rds_db.execute_query(count_query, params)
-        total = total_result[0]['total'] if total_result else 0
+        total_result = rds_db.execute_query(count_query, tuple(params), fetch_one=True)
+        total = total_result['total'] if total_result else 0
         
         # Calculate pagination
         pages = (total + per_page - 1) // per_page
@@ -95,7 +95,7 @@ async def get_payments():
         params.extend([per_page, offset])
         
         # Execute query
-        payments = rds_db.execute_query(base_query, params)
+        payments = rds_db.execute_query(base_query, tuple(params), fetch_all=True)
         
         # Get payment statistics
         stats_query = """
@@ -109,8 +109,8 @@ async def get_payments():
         FROM admin_payments
         """
         
-        stats_result = rds_db.execute_query(stats_query)
-        stats = stats_result[0] if stats_result else {}
+        stats_result = rds_db.execute_query(stats_query, fetch_one=True)
+        stats = stats_result if stats_result else {}
         
         # Format payments
         formatted_payments = []
@@ -192,7 +192,7 @@ async def get_payment_stats():
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         
         overview_result = rds_db.execute_query(overview_query, (month_start,), fetch_one=True)
-        overview = overview_result[0] if overview_result else {}
+        overview = overview_result if overview_result else {}
         
         # Payment method breakdown
         method_query = """
@@ -203,7 +203,7 @@ async def get_payment_stats():
         ORDER BY count DESC
         """
         
-        method_result = rds_db.execute_query(method_query)
+        method_result = rds_db.execute_query(method_query, fetch_all=True)
         method_breakdown = [
             {
                 'method': row['payment_method'],
@@ -287,13 +287,11 @@ async def get_revenue_chart():
             ORDER BY date
             """
         
-        chart_result = rds_db.execute_query(chart_query, (start_date,), fetch_one=True)
-        if not chart_result:
-            return jsonify({"error": "Resource not found"}), 404
+        chart_result = rds_db.execute_query(chart_query, (start_date,), fetch_all=True)
         
         # Format chart data
         chart_data = []
-        for row in chart_result:
+        for row in (chart_result or []):
             if date_format == 'Day':
                 name = row['date'].strftime('%a') if row['date'] else 'Unknown'
             else:
@@ -365,11 +363,13 @@ async def add_payment():
         ))
         
         # Log admin action
-        from routes.admin_auth import log_admin_action
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+        from admin.utils import log_admin_action
         log_admin_action(
             admin_email, 'CREATE_PAYMENT', 'payment', payment_id,
-            f"Added payment: {transaction_id} - ${data['amount']}",
-            request.remote_addr, request.headers.get('User-Agent')
+            f"Added payment: {transaction_id} - ${data['amount']}"
         )
         
         return jsonify({
@@ -436,11 +436,13 @@ async def update_payment(payment_id):
         rds_db.execute_query(update_query, params)
         
         # Log admin action
-        from routes.admin_auth import log_admin_action
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+        from admin.utils import log_admin_action
         log_admin_action(
             admin_email, 'UPDATE_PAYMENT', 'payment', payment_id,
-            f"Updated payment: {payments[0]['transaction_id']}",
-            request.remote_addr, request.headers.get('User-Agent')
+            f"Updated payment: {payments[0]['transaction_id']}"
         )
         
         return jsonify({
@@ -500,11 +502,13 @@ async def process_refund(payment_id):
         rds_db.execute_query(update_query, (datetime.utcnow(), payment_id))
         
         # Log admin action
-        from routes.admin_auth import log_admin_action
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+        from admin.utils import log_admin_action
         log_admin_action(
             admin_email, 'PROCESS_REFUND', 'payment', payment_id,
-            f"Processed refund for {payment['transaction_id']}: {data['reason']}",
-            request.remote_addr, request.headers.get('User-Agent')
+            f"Processed refund for {payment['transaction_id']}: {data['reason']}"
         )
         
         return jsonify({

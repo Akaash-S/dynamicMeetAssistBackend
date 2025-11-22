@@ -10,10 +10,10 @@ load_dotenv()
 # Run automatic AWS setup on startup
 try:
     from initialize import initialize_backend
-    print("\n🔧 Running automatic AWS setup...")
+    print("\n[SETUP] Running automatic AWS setup...")
     initialize_backend()
 except Exception as e:
-    print(f"⚠️  Warning: Auto-setup failed: {e}")
+    print(f"[WARNING] Auto-setup failed: {e}")
     print("   Continuing with manual configuration...")
 
 # Import blueprints
@@ -25,6 +25,7 @@ from routes.health import health_bp
 from routes.google_calendar import google_calendar_bp
 from routes.totp_simple import totp_bp
 from routes.notifications import notifications_bp
+from routes.auth_2fa import auth_2fa_bp  # Enhanced 2FA routes
 
 # Import CORS debug routes (development only)
 if os.getenv('FLASK_ENV') == 'development':
@@ -152,7 +153,14 @@ def create_app():
     app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
     
     # Initialize RDS database
-    init_rds_db()
+    try:
+        init_rds_db()
+    except UnicodeEncodeError as e:
+        print(f"[WARNING] Database initialization skipped due to encoding error: {e}")
+        print("   Continuing without database initialization...")
+    except Exception as e:
+        print(f"[WARNING] Database initialization failed: {e}")
+        print("   Continuing without database initialization...")
     
     # Initialize rate limiter
     limiter.init_app(app)
@@ -246,20 +254,32 @@ def create_app():
     app.register_blueprint(google_calendar_bp, url_prefix='/api/calendar')
     app.register_blueprint(totp_bp, url_prefix='/api')
     app.register_blueprint(notifications_bp, url_prefix='/api/notifications')
+    app.register_blueprint(auth_2fa_bp, url_prefix='/api')  # Enhanced 2FA
     
-    # Register admin blueprints
-    from admin.routes.admin_auth import admin_auth_bp
-    from admin.routes.admin_users import admin_users_bp
-    from admin.routes.admin_issues import admin_issues_bp
-    from admin.routes.admin_payments import admin_payments_bp
-    from admin.routes.admin_notifications import admin_notifications_bp
-
-    
-    app.register_blueprint(admin_auth_bp, url_prefix='/api/admin/auth')
-    app.register_blueprint(admin_users_bp, url_prefix='/api/admin/users')
-    app.register_blueprint(admin_issues_bp, url_prefix='/api/admin/issues')
-    app.register_blueprint(admin_payments_bp, url_prefix='/api/admin/payments')
-    app.register_blueprint(admin_notifications_bp, url_prefix='/api/admin/notifications')
+    # Register admin blueprints from admin directory
+    try:
+        print("[INFO] Importing admin blueprints from admin directory...")
+        
+        # Import using proper module paths
+        from admin.routes.auth import admin_auth_bp
+        from admin.routes.users import admin_users_bp
+        from admin.routes.issues import admin_issues_bp
+        from admin.routes.payments import admin_payments_bp
+        from admin.routes.notifications import admin_notifications_bp
+        
+        app.register_blueprint(admin_auth_bp, url_prefix='/api/admin/auth')
+        app.register_blueprint(admin_users_bp, url_prefix='/api/admin/users')
+        app.register_blueprint(admin_issues_bp, url_prefix='/api/admin/issues')
+        app.register_blueprint(admin_payments_bp, url_prefix='/api/admin/payments')
+        app.register_blueprint(admin_notifications_bp, url_prefix='/api/admin/notifications')
+        
+        # Verify routes were registered
+        admin_routes = [str(rule) for rule in app.url_map.iter_rules() if 'admin' in str(rule)]
+        print(f"[INFO] Admin blueprints registered: {len(admin_routes)} routes")
+    except Exception as e:
+        print(f"[ERROR] Failed to register admin blueprints: {e}")
+        import traceback
+        traceback.print_exc()
     
     # Register CORS debug routes (development only)
     if flask_env == 'development':
@@ -308,29 +328,29 @@ if __name__ == '__main__':
     from utils.config_validator import ConfigValidator
     
     print("\n" + "=" * 60)
-    print("🚀 Dynamic Meeting Assistant Backend")
+    print("[SERVER] Dynamic Meeting Assistant Backend")
     print("=" * 60)
     
     # Run configuration validation
     config_valid = ConfigValidator.print_validation_report()
     
     if not config_valid:
-        print("\n⚠️  WARNING: Critical configuration issues detected!")
+        print("\n[WARNING] Critical configuration issues detected!")
         print("   The application may not function correctly.")
         print("   Please review the warnings above.\n")
     
     # Print configuration summary
     config_summary = ConfigValidator.get_config_summary()
-    print("\n📋 Configuration Summary:")
+    print("\n[CONFIG] Configuration Summary:")
     print(f"   Environment: {config_summary['environment']}")
     print(f"   Port: {config_summary['port']}")
-    print(f"   Database: {'✅' if config_summary['database_configured'] else '❌'}")
-    print(f"   Storage: {'✅' if config_summary['storage_configured'] else '❌'}")
-    print(f"   AI Processing: {'✅' if config_summary['ai_configured'] else '❌'}")
-    print(f"   Transcription: {'✅' if config_summary['transcription_configured'] else '❌'}")
-    print(f"   Calendar Sync: {'✅' if config_summary['calendar_configured'] else '❌'}")
-    print(f"   Email: {'✅' if config_summary['email_configured'] else '❌'}")
-    print(f"   Admin: {'✅' if config_summary['admin_configured'] else '❌'}")
+    print(f"   Database: {'[OK]' if config_summary['database_configured'] else '[MISSING]'}")
+    print(f"   Storage: {'[OK]' if config_summary['storage_configured'] else '[MISSING]'}")
+    print(f"   AI Processing: {'[OK]' if config_summary['ai_configured'] else '[MISSING]'}")
+    print(f"   Transcription: {'[OK]' if config_summary['transcription_configured'] else '[MISSING]'}")
+    print(f"   Calendar Sync: {'[OK]' if config_summary['calendar_configured'] else '[MISSING]'}")
+    print(f"   Email: {'[OK]' if config_summary['email_configured'] else '[MISSING]'}")
+    print(f"   Admin: {'[OK]' if config_summary['admin_configured'] else '[MISSING]'}")
     print("=" * 60 + "\n")
     
     app = create_app()
@@ -339,12 +359,12 @@ if __name__ == '__main__':
     # Use debug=False for production, debug=True for development
     debug_mode = os.environ.get('FLASK_ENV') == 'development'
     
-    print(f"🌐 Starting server on http://0.0.0.0:{port}")
+    print(f"[SERVER] Starting server on http://0.0.0.0:{port}")
     print(f"   Mode: {'Development' if debug_mode else 'Production'}")
     print(f"   Admin Dashboard: http://localhost:{port}/api/admin/auth/login")
     print(f"   Health Check: http://localhost:{port}/api/health\n")
     
     app.run(debug=debug_mode, host='0.0.0.0', port=port)
-
-# For deployment (Gunicorn will use this)
-app = create_app()
+else:
+    # For deployment (Gunicorn will use this)
+    app = create_app()
