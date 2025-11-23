@@ -80,7 +80,9 @@ def create_app():
                     "Accept", 
                     "Origin",
                     "X-API-Key",
-                    "X-CSRFToken"
+                    "X-CSRFToken",
+                    "X-User-ID",
+                    "X-Session-ID"
                 ],
                 "supports_credentials": False,
                 "max_age": 86400  # 24 hours
@@ -126,7 +128,7 @@ def create_app():
                 
                 # Set comprehensive CORS headers
                 response.headers['Access-Control-Allow-Methods'] = 'GET,POST,PUT,DELETE,OPTIONS,PATCH'
-                response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-Requested-With,Accept,Origin,X-API-Key,X-CSRFToken'
+                response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-Requested-With,Accept,Origin,X-API-Key,X-CSRFToken,X-User-ID,X-Session-ID'
                 response.headers['Access-Control-Allow-Credentials'] = 'false'
                 response.headers['Access-Control-Max-Age'] = '86400'  # 24 hours
                 response.headers['Vary'] = 'Origin'
@@ -140,8 +142,8 @@ def create_app():
             # Secure fallback - only allow in development
             if flask_env == 'development':
                 response.headers['Access-Control-Allow-Origin'] = '*'
-                response.headers['Access-Control-Allow-Methods'] = 'GET,POST,PUT,DELETE,OPTIONS'
-                response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-Requested-With'
+                response.headers['Access-Control-Allow-Methods'] = 'GET,POST,PUT,DELETE,OPTIONS,PATCH'
+                response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-Requested-With,Accept,Origin,X-API-Key,X-CSRFToken,X-User-ID,X-Session-ID'
             else:
                 # In production, don't set CORS headers on error
                 pass
@@ -193,7 +195,7 @@ def create_app():
                 else:
                     response.headers.add("Access-Control-Allow-Origin", origin or "*")
                 
-            response.headers.add('Access-Control-Allow-Headers', "Content-Type,Authorization,X-Requested-With,Accept,Origin,X-API-Key,X-CSRFToken")
+            response.headers.add('Access-Control-Allow-Headers', "Content-Type,Authorization,X-Requested-With,Accept,Origin,X-API-Key,X-CSRFToken,X-User-ID,X-Session-ID")
             response.headers.add('Access-Control-Allow-Methods', "GET,POST,PUT,DELETE,OPTIONS,PATCH")
             response.headers.add('Access-Control-Allow-Credentials', "false")
             response.headers.add('Access-Control-Max-Age', "86400")
@@ -252,9 +254,9 @@ def create_app():
     app.register_blueprint(upload_bp, url_prefix='/api/upload')
     app.register_blueprint(health_bp, url_prefix='/api/health/detailed')
     app.register_blueprint(google_calendar_bp, url_prefix='/api/calendar')
-    app.register_blueprint(totp_bp, url_prefix='/api')
+    # app.register_blueprint(totp_bp, url_prefix='/api')  # Disabled - using enhanced auth_2fa_bp instead
     app.register_blueprint(notifications_bp, url_prefix='/api/notifications')
-    app.register_blueprint(auth_2fa_bp, url_prefix='/api')  # Enhanced 2FA
+    app.register_blueprint(auth_2fa_bp, url_prefix='/api')  # Enhanced 2FA with logout tracking and inactivity
     
     # Register admin blueprints from admin directory
     try:

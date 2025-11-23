@@ -135,7 +135,7 @@ class CORSValidator:
         """Get appropriate CORS headers for a given origin."""
         headers = {
             'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS,PATCH',
-            'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Requested-With,Accept,Origin,X-API-Key,X-CSRFToken',
+            'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Requested-With,Accept,Origin,X-API-Key,X-CSRFToken,X-User-ID,X-Session-ID',
             'Access-Control-Allow-Credentials': 'false',
             'Access-Control-Max-Age': '86400',
             'Vary': 'Origin'

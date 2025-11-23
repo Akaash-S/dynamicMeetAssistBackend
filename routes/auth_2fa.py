@@ -30,7 +30,14 @@ def require_auth(f):
     def decorated_function(*args, **kwargs):
         user_id = request.headers.get('X-User-ID')
         if not user_id:
-            return jsonify({'error': 'Authentication required'}), 401
+            logger.error(f"❌ Authentication failed: No X-User-ID header")
+            logger.error(f"❌ Request headers: {dict(request.headers)}")
+            return jsonify({
+                'error': 'Authentication required',
+                'message': 'X-User-ID header is missing',
+                'hint': 'Make sure you are logged in and Firebase Auth is initialized'
+            }), 401
+        logger.info(f"✅ Authentication successful for user: {user_id}")
         return f(*args, **kwargs)
     return decorated_function
 
@@ -327,22 +334,42 @@ def get_2fa_status():
     Get 2FA status for user
     """
     try:
+        logger.info("=" * 60)
+        logger.info("📡 2FA STATUS ENDPOINT CALLED")
+        logger.info(f"📡 Request method: {request.method}")
+        logger.info(f"📡 Request path: {request.path}")
+        logger.info(f"📡 Request headers: {dict(request.headers)}")
+        
         user_id = request.headers.get('X-User-ID')
+        
+        logger.info(f"📡 2FA status check for Firebase UID: {user_id}")
+        
+        if not user_id:
+            logger.error("❌ No X-User-ID header provided")
+            return jsonify({'error': 'X-User-ID header is required'}), 400
         
         # Get user's internal ID
         user = rds_db.execute_query(
-            'SELECT id FROM users WHERE firebase_uid = %s',
+            'SELECT id, email FROM users WHERE firebase_uid = %s',
             (user_id,),
             fetch_one=True
         )
         
         if not user:
-            return jsonify({'error': 'User not found'}), 404
+            logger.error(f"❌ User not found for Firebase UID: {user_id}")
+            return jsonify({'error': 'User not found in database'}), 404
         
         internal_user_id = user['id']
+        user_email = user.get('email', 'unknown')
+        
+        logger.info(f"✅ User found: {user_email} (internal ID: {internal_user_id})")
+        
+        # Expire inactive sessions (10+ minutes old)
+        enhanced_2fa_service.expire_inactive_sessions(internal_user_id)
         
         # Check if 2FA is enabled
         is_enabled = enhanced_2fa_service.is_2fa_enabled(internal_user_id)
+        logger.info(f"🔐 2FA enabled for {user_email}: {is_enabled}")
         
         # Get remaining backup codes if enabled
         remaining_codes = 0
@@ -351,6 +378,7 @@ def get_2fa_status():
         
         # Check if 2FA required on next login
         requires_on_login = enhanced_2fa_service.should_require_2fa_on_login(internal_user_id)
+        logger.info(f"🔐 2FA required on login for {user_email}: {requires_on_login}")
         
         return jsonify({
             'success': True,
@@ -362,8 +390,8 @@ def get_2fa_status():
         }), 200
         
     except Exception as e:
-        logger.error(f"Error getting 2FA status: {e}")
-        return jsonify({'error': 'Failed to get 2FA status'}), 500
+        logger.error(f"❌ Error getting 2FA status: {e}", exc_info=True)
+        return jsonify({'error': f'Failed to get 2FA status: {str(e)}'}), 500
 
 
 @auth_2fa_bp.route('/2fa/regenerate-backup-codes', methods=['POST'])
@@ -442,7 +470,16 @@ def logout_with_2fa_tracking():
     """
     try:
         user_id = request.headers.get('X-User-ID')
-        session_id = request.headers.get('X-Session-ID') or request.get_json().get('session_id')
+        session_id = request.headers.get('X-Session-ID')
+        
+        # Try to get session_id from JSON body if not in header
+        if not session_id:
+            try:
+                data = request.get_json(silent=True)
+                if data:
+                    session_id = data.get('session_id')
+            except:
+                pass
         
         # Get user's internal ID
         user = rds_db.execute_query(

@@ -217,6 +217,38 @@ class Enhanced2FAService:
             return None
     
     @staticmethod
+    def expire_inactive_sessions(user_id: str):
+        """
+        Expire sessions that have been inactive for more than 10 minutes
+        """
+        try:
+            from datetime import datetime, timedelta
+            
+            # Find active sessions older than 10 minutes
+            query = """
+            UPDATE user_sessions 
+            SET session_type = %s, logged_out_at = %s
+            WHERE user_id = %s 
+            AND session_type = %s
+            AND created_at < %s
+            """
+            
+            inactive_threshold = datetime.now() - timedelta(minutes=10)
+            
+            rds_db.execute_query(query, (
+                Enhanced2FAService.SESSION_EXPIRED,
+                datetime.now(),
+                user_id,
+                Enhanced2FAService.SESSION_ACTIVE,
+                inactive_threshold
+            ))
+            
+            logger.info(f"Expired inactive sessions for user: {user_id}")
+            
+        except Exception as e:
+            logger.error(f"Error expiring inactive sessions: {e}")
+    
+    @staticmethod
     def track_logout(user_id: str, session_id: str):
         """
         Track manual logout to require 2FA on next login
@@ -259,16 +291,17 @@ class Enhanced2FAService:
         
         Returns True if:
         - User has 2FA enabled AND
-        - User manually logged out (not just session expired)
+        - (User manually logged out OR session inactive for 10+ minutes)
         """
         try:
             # Check if 2FA is enabled
             if not Enhanced2FAService.is_2fa_enabled(user_id):
+                logger.info(f"2FA not enabled for user {user_id}")
                 return False
             
-            # Check last session status
+            # Check if there's an active session
             query = """
-            SELECT session_type, logged_out_at 
+            SELECT session_type, session_id, created_at, logged_out_at
             FROM user_sessions 
             WHERE user_id = %s 
             ORDER BY created_at DESC 
@@ -279,10 +312,42 @@ class Enhanced2FAService:
             
             if not result:
                 # No previous session, require 2FA
+                logger.info(f"No session found for user {user_id}, requiring 2FA")
                 return True
             
-            # Require 2FA if user manually logged out
-            return result.get('session_type') == Enhanced2FAService.SESSION_LOGGED_OUT
+            session_type = result.get('session_type')
+            created_at = result.get('created_at')
+            
+            # Case 1: User manually logged out - ALWAYS require 2FA
+            if session_type == Enhanced2FAService.SESSION_LOGGED_OUT:
+                logger.info(f"User {user_id} manually logged out, requiring 2FA")
+                return True
+            
+            # Case 2: Session expired - ALWAYS require 2FA
+            if session_type == Enhanced2FAService.SESSION_EXPIRED:
+                logger.info(f"Session expired for user {user_id}, requiring 2FA")
+                return True
+            
+            # Case 3: Active session - check if it's been inactive for 10+ minutes
+            if session_type == Enhanced2FAService.SESSION_ACTIVE:
+                from datetime import datetime, timedelta
+                
+                if isinstance(created_at, datetime):
+                    time_since_creation = datetime.now() - created_at
+                    inactive_threshold = timedelta(minutes=10)
+                    
+                    if time_since_creation >= inactive_threshold:
+                        # Session inactive for 10+ minutes, require 2FA
+                        logger.info(f"Active session for user {user_id} inactive for {time_since_creation.total_seconds()/60:.1f} minutes (>10 min), requiring 2FA")
+                        return True
+                    else:
+                        # Session still active and within 10 minutes
+                        logger.info(f"Active session for user {user_id} created {time_since_creation.total_seconds()/60:.1f} minutes ago (<10 min), not requiring 2FA")
+                        return False
+            
+            # Default: require 2FA for safety
+            logger.info(f"Unknown session state for user {user_id}, requiring 2FA for safety")
+            return True
             
         except Exception as e:
             logger.error(f"Error checking 2FA requirement: {e}")
