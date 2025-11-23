@@ -89,7 +89,7 @@ class Enhanced2FAService:
         """
         try:
             # Get user's backup codes
-            query = "SELECT backup_codes FROM users WHERE id = %s"
+            query = "SELECT backup_codes FROM users WHERE firebase_uid = %s"
             result = rds_db.execute_query(query, (user_id,), fetch_one=True)
             
             if not result or not result.get('backup_codes'):
@@ -107,7 +107,7 @@ class Enhanced2FAService:
                     bc['used_at'] = datetime.utcnow().isoformat()
                     
                     # Update database
-                    update_query = "UPDATE users SET backup_codes = %s WHERE id = %s"
+                    update_query = "UPDATE users SET backup_codes = %s WHERE firebase_uid = %s"
                     rds_db.execute_query(update_query, (json.dumps(backup_codes), user_id))
                     
                     logger.info(f"Backup code used for user: {user_id}")
@@ -154,7 +154,7 @@ class Enhanced2FAService:
                 two_factor_secret = %s,
                 backup_codes = %s,
                 updated_at = %s
-            WHERE id = %s
+            WHERE firebase_uid = %s
             """
             
             rds_db.execute_query(query, (
@@ -183,7 +183,7 @@ class Enhanced2FAService:
                 two_factor_secret = NULL,
                 backup_codes = NULL,
                 updated_at = %s
-            WHERE id = %s
+            WHERE firebase_uid = %s
             """
             
             rds_db.execute_query(query, (datetime.utcnow(), user_id))
@@ -198,7 +198,7 @@ class Enhanced2FAService:
     def is_2fa_enabled(user_id: str) -> bool:
         """Check if 2FA is enabled for a user"""
         try:
-            query = "SELECT two_factor_enabled FROM users WHERE id = %s"
+            query = "SELECT two_factor_enabled FROM users WHERE firebase_uid = %s"
             result = rds_db.execute_query(query, (user_id,), fetch_one=True)
             return result and result.get('two_factor_enabled', False)
         except Exception as e:
@@ -209,7 +209,7 @@ class Enhanced2FAService:
     def get_2fa_secret(user_id: str) -> Optional[str]:
         """Get user's 2FA secret"""
         try:
-            query = "SELECT two_factor_secret FROM users WHERE id = %s"
+            query = "SELECT two_factor_secret FROM users WHERE firebase_uid = %s"
             result = rds_db.execute_query(query, (user_id,), fetch_one=True)
             return result.get('two_factor_secret') if result else None
         except Exception as e:
@@ -224,7 +224,7 @@ class Enhanced2FAService:
             SELECT two_factor_inactivity_timeout, 
                    two_factor_always_required,
                    two_factor_require_on_login
-            FROM users WHERE id = %s
+            FROM users WHERE firebase_uid = %s
             """
             result = rds_db.execute_query(query, (user_id,), fetch_one=True)
             
@@ -278,7 +278,7 @@ class Enhanced2FAService:
             params.append(datetime.utcnow())
             params.append(user_id)
             
-            query = f"UPDATE users SET {', '.join(updates)} WHERE id = %s"
+            query = f"UPDATE users SET {', '.join(updates)} WHERE firebase_uid = %s"
             rds_db.execute_query(query, tuple(params))
             
             logger.info(f"2FA settings updated for user: {user_id}")
@@ -522,7 +522,7 @@ class Enhanced2FAService:
     def get_remaining_backup_codes(user_id: str) -> int:
         """Get count of remaining unused backup codes"""
         try:
-            query = "SELECT backup_codes FROM users WHERE id = %s"
+            query = "SELECT backup_codes FROM users WHERE firebase_uid = %s"
             result = rds_db.execute_query(query, (user_id,), fetch_one=True)
             
             if not result or not result.get('backup_codes'):
