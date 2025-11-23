@@ -23,13 +23,8 @@ from routes.tasks import tasks_bp
 from routes.upload import upload_bp
 from routes.health import health_bp
 from routes.google_calendar import google_calendar_bp
-from routes.totp_simple import totp_bp
 from routes.notifications import notifications_bp
 from routes.auth_2fa import auth_2fa_bp  # Enhanced 2FA routes
-
-# Import CORS debug routes (development only)
-if os.getenv('FLASK_ENV') == 'development':
-    from routes.cors_debug import cors_debug_bp
 
 # Import database initialization
 from config.aws_rds_database import init_rds_db
@@ -254,7 +249,6 @@ def create_app():
     app.register_blueprint(upload_bp, url_prefix='/api/upload')
     app.register_blueprint(health_bp, url_prefix='/api/health/detailed')
     app.register_blueprint(google_calendar_bp, url_prefix='/api/calendar')
-    # app.register_blueprint(totp_bp, url_prefix='/api')  # Disabled - using enhanced auth_2fa_bp instead
     app.register_blueprint(notifications_bp, url_prefix='/api/notifications')
     app.register_blueprint(auth_2fa_bp, url_prefix='/api')  # Enhanced 2FA with logout tracking and inactivity
     
@@ -282,10 +276,6 @@ def create_app():
         print(f"[ERROR] Failed to register admin blueprints: {e}")
         import traceback
         traceback.print_exc()
-    
-    # Register CORS debug routes (development only)
-    if flask_env == 'development':
-        app.register_blueprint(cors_debug_bp, url_prefix='/api/cors')
     
     # Global error handlers
     @app.errorhandler(400)

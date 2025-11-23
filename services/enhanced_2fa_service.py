@@ -217,14 +217,90 @@ class Enhanced2FAService:
             return None
     
     @staticmethod
+    def get_user_2fa_settings(user_id: str) -> Dict:
+        """Get user's 2FA settings"""
+        try:
+            query = """
+            SELECT two_factor_inactivity_timeout, 
+                   two_factor_always_required,
+                   two_factor_require_on_login
+            FROM users WHERE id = %s
+            """
+            result = rds_db.execute_query(query, (user_id,), fetch_one=True)
+            
+            if result:
+                return {
+                    'inactivity_timeout': result.get('two_factor_inactivity_timeout', 600),  # Default 10 minutes
+                    'always_required': result.get('two_factor_always_required', False),
+                    'require_on_login': result.get('two_factor_require_on_login', True)
+                }
+            
+            # Defaults
+            return {
+                'inactivity_timeout': 600,  # 10 minutes
+                'always_required': False,
+                'require_on_login': True
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting 2FA settings: {e}")
+            return {
+                'inactivity_timeout': 600,
+                'always_required': False,
+                'require_on_login': True
+            }
+    
+    @staticmethod
+    def update_user_2fa_settings(user_id: str, inactivity_timeout: Optional[int] = None, 
+                                 always_required: Optional[bool] = None,
+                                 require_on_login: Optional[bool] = None) -> bool:
+        """Update user's 2FA settings"""
+        try:
+            updates = []
+            params = []
+            
+            if inactivity_timeout is not None:
+                updates.append("two_factor_inactivity_timeout = %s")
+                params.append(inactivity_timeout)
+            
+            if always_required is not None:
+                updates.append("two_factor_always_required = %s")
+                params.append(always_required)
+            
+            if require_on_login is not None:
+                updates.append("two_factor_require_on_login = %s")
+                params.append(require_on_login)
+            
+            if not updates:
+                return True
+            
+            updates.append("updated_at = %s")
+            params.append(datetime.utcnow())
+            params.append(user_id)
+            
+            query = f"UPDATE users SET {', '.join(updates)} WHERE id = %s"
+            rds_db.execute_query(query, tuple(params))
+            
+            logger.info(f"2FA settings updated for user: {user_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error updating 2FA settings: {e}")
+            return False
+    
+    @staticmethod
     def expire_inactive_sessions(user_id: str):
         """
-        Expire sessions that have been inactive for more than 10 minutes
+        Expire sessions that have been inactive based on user's timeout setting
         """
         try:
             from datetime import datetime, timedelta
             
-            # Find active sessions older than 10 minutes
+            # Get user's inactivity timeout setting
+            settings = Enhanced2FAService.get_user_2fa_settings(user_id)
+            timeout_seconds = settings['inactivity_timeout']
+            
+            # Find active sessions older than timeout
             query = """
             UPDATE user_sessions 
             SET session_type = %s, logged_out_at = %s
@@ -233,7 +309,7 @@ class Enhanced2FAService:
             AND created_at < %s
             """
             
-            inactive_threshold = datetime.now() - timedelta(minutes=10)
+            inactive_threshold = datetime.now() - timedelta(seconds=timeout_seconds)
             
             rds_db.execute_query(query, (
                 Enhanced2FAService.SESSION_EXPIRED,
@@ -243,7 +319,7 @@ class Enhanced2FAService:
                 inactive_threshold
             ))
             
-            logger.info(f"Expired inactive sessions for user: {user_id}")
+            logger.info(f"Expired inactive sessions for user: {user_id} (timeout: {timeout_seconds}s)")
             
         except Exception as e:
             logger.error(f"Error expiring inactive sessions: {e}")
@@ -291,12 +367,27 @@ class Enhanced2FAService:
         
         Returns True if:
         - User has 2FA enabled AND
-        - (User manually logged out OR session inactive for 10+ minutes)
+        - (User has "always require" enabled OR
+           User manually logged out OR 
+           Session inactive beyond user's timeout setting)
         """
         try:
             # Check if 2FA is enabled
             if not Enhanced2FAService.is_2fa_enabled(user_id):
                 logger.info(f"2FA not enabled for user {user_id}")
+                return False
+            
+            # Get user's 2FA settings
+            settings = Enhanced2FAService.get_user_2fa_settings(user_id)
+            
+            # If user has "always require" enabled, always ask for 2FA
+            if settings['always_required']:
+                logger.info(f"User {user_id} has 'always require 2FA' enabled")
+                return True
+            
+            # If user disabled "require on login", skip 2FA
+            if not settings['require_on_login']:
+                logger.info(f"User {user_id} has 'require on login' disabled")
                 return False
             
             # Check if there's an active session
@@ -328,21 +419,22 @@ class Enhanced2FAService:
                 logger.info(f"Session expired for user {user_id}, requiring 2FA")
                 return True
             
-            # Case 3: Active session - check if it's been inactive for 10+ minutes
+            # Case 3: Active session - check if it's been inactive beyond user's timeout
             if session_type == Enhanced2FAService.SESSION_ACTIVE:
                 from datetime import datetime, timedelta
                 
                 if isinstance(created_at, datetime):
                     time_since_creation = datetime.now() - created_at
-                    inactive_threshold = timedelta(minutes=10)
+                    timeout_seconds = settings['inactivity_timeout']
+                    inactive_threshold = timedelta(seconds=timeout_seconds)
                     
                     if time_since_creation >= inactive_threshold:
-                        # Session inactive for 10+ minutes, require 2FA
-                        logger.info(f"Active session for user {user_id} inactive for {time_since_creation.total_seconds()/60:.1f} minutes (>10 min), requiring 2FA")
+                        # Session inactive beyond user's timeout, require 2FA
+                        logger.info(f"Active session for user {user_id} inactive for {time_since_creation.total_seconds()/60:.1f} minutes (>{timeout_seconds/60:.1f} min), requiring 2FA")
                         return True
                     else:
-                        # Session still active and within 10 minutes
-                        logger.info(f"Active session for user {user_id} created {time_since_creation.total_seconds()/60:.1f} minutes ago (<10 min), not requiring 2FA")
+                        # Session still active and within timeout
+                        logger.info(f"Active session for user {user_id} created {time_since_creation.total_seconds()/60:.1f} minutes ago (<{timeout_seconds/60:.1f} min), not requiring 2FA")
                         return False
             
             # Default: require 2FA for safety

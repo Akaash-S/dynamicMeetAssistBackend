@@ -507,3 +507,107 @@ def logout_with_2fa_tracking():
     except Exception as e:
         logger.error(f"Error during logout: {e}")
         return jsonify({'error': 'Failed to logout'}), 500
+
+
+@auth_2fa_bp.route('/2fa/settings', methods=['GET'])
+@add_security_headers()
+@require_auth
+def get_2fa_settings():
+    """
+    Get user's 2FA settings
+    
+    Returns:
+        - inactivity_timeout: Seconds before session expires (default 600 = 10 minutes)
+        - always_required: Always ask for 2FA (default False)
+        - require_on_login: Require 2FA after logout (default True)
+    """
+    try:
+        user_id = request.headers.get('X-User-ID')
+        
+        settings = enhanced_2fa_service.get_user_2fa_settings(user_id)
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'inactivity_timeout': settings['inactivity_timeout'],
+                'inactivity_timeout_minutes': settings['inactivity_timeout'] // 60,
+                'always_required': settings['always_required'],
+                'require_on_login': settings['require_on_login']
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting 2FA settings: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to get 2FA settings',
+            'message': str(e)
+        }), 500
+
+
+@auth_2fa_bp.route('/2fa/settings', methods=['PUT'])
+@add_security_headers()
+@require_auth
+def update_2fa_settings():
+    """
+    Update user's 2FA settings
+    
+    Body:
+        - inactivity_timeout_minutes: Minutes before session expires (5-1440)
+        - always_required: Always ask for 2FA (boolean)
+        - require_on_login: Require 2FA after logout (boolean)
+    """
+    try:
+        user_id = request.headers.get('X-User-ID')
+        data = request.get_json()
+        
+        # Validate and convert inactivity timeout
+        inactivity_timeout = None
+        if 'inactivity_timeout_minutes' in data:
+            minutes = data['inactivity_timeout_minutes']
+            if not isinstance(minutes, (int, float)) or minutes < 5 or minutes > 1440:
+                return jsonify({
+                    'success': False,
+                    'error': 'Invalid inactivity timeout',
+                    'message': 'Timeout must be between 5 and 1440 minutes (24 hours)'
+                }), 400
+            inactivity_timeout = int(minutes * 60)  # Convert to seconds
+        
+        always_required = data.get('always_required')
+        require_on_login = data.get('require_on_login')
+        
+        # Update settings
+        success = enhanced_2fa_service.update_user_2fa_settings(
+            user_id,
+            inactivity_timeout=inactivity_timeout,
+            always_required=always_required,
+            require_on_login=require_on_login
+        )
+        
+        if not success:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to update settings'
+            }), 500
+        
+        # Get updated settings
+        settings = enhanced_2fa_service.get_user_2fa_settings(user_id)
+        
+        return jsonify({
+            'success': True,
+            'message': '2FA settings updated successfully',
+            'data': {
+                'inactivity_timeout': settings['inactivity_timeout'],
+                'inactivity_timeout_minutes': settings['inactivity_timeout'] // 60,
+                'always_required': settings['always_required'],
+                'require_on_login': settings['require_on_login']
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error updating 2FA settings: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to update 2FA settings',
+            'message': str(e)
+        }), 500
