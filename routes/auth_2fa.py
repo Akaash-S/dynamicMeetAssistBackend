@@ -116,32 +116,36 @@ def enable_2fa():
         secret = data.get('secret')
         user_id = request.headers.get('X-User-ID')
         
+        logger.info(f"🔐 Enabling 2FA for user: {user_id}")
+        logger.info(f"🔐 Received secret: {secret[:8]}... (truncated)")
+        logger.info(f"🔐 Received code: {code}")
+        
         if not code or not secret:
             return jsonify({'error': 'Code and secret are required'}), 400
         
-        # Get user's internal ID
-        user = rds_db.execute_query(
-            'SELECT id FROM users WHERE firebase_uid = %s',
-            (user_id,),
-            fetch_one=True
-        )
+        # Check if user already has 2FA enabled with a different secret
+        current_secret = enhanced_2fa_service.get_2fa_secret(user_id)
+        if current_secret and current_secret != secret:
+            logger.warning(f"⚠️  User {user_id} has existing 2FA with different secret")
+            logger.warning(f"⚠️  Current secret: {current_secret[:8]}... (truncated)")
+            logger.warning(f"⚠️  New secret: {secret[:8]}... (truncated)")
+            logger.info(f"🔄 Replacing old 2FA setup with new one")
         
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
-        internal_user_id = user['id']
-        
-        # Verify code
+        # Verify code with the NEW secret (not the old one in database)
         if not enhanced_2fa_service.verify_totp_code(secret, code):
+            logger.error(f"❌ Invalid verification code for user: {user_id}")
             return jsonify({'error': 'Invalid verification code'}), 400
         
-        # Enable 2FA
-        success, backup_codes = enhanced_2fa_service.enable_2fa(internal_user_id, secret)
+        logger.info(f"✅ Code verified successfully for user: {user_id}")
+        
+        # Enable 2FA using Firebase UID - this will REPLACE any existing 2FA setup
+        success, backup_codes = enhanced_2fa_service.enable_2fa(user_id, secret)
         
         if not success:
+            logger.error(f"❌ Failed to enable 2FA for user: {user_id}")
             return jsonify({'error': 'Failed to enable 2FA'}), 500
         
-        logger.info(f"2FA enabled for user: {internal_user_id}")
+        logger.info(f"✅ 2FA enabled successfully for user: {user_id}")
         
         return jsonify({
             'success': True,
@@ -152,7 +156,7 @@ def enable_2fa():
         }), 200
         
     except Exception as e:
-        logger.error(f"Error enabling 2FA: {e}")
+        logger.error(f"❌ Error enabling 2FA: {e}", exc_info=True)
         return jsonify({'error': 'Failed to enable 2FA'}), 500
 
 
@@ -168,34 +172,35 @@ def disable_2fa():
         code = data.get('code')
         user_id = request.headers.get('X-User-ID')
         
+        logger.info(f"🔓 Disabling 2FA for user: {user_id}")
+        logger.info(f"🔓 Received code: {code}")
+        
         if not code:
             return jsonify({'error': 'Verification code is required'}), 400
         
-        # Get user's internal ID
-        user = rds_db.execute_query(
-            'SELECT id FROM users WHERE firebase_uid = %s',
-            (user_id,),
-            fetch_one=True
-        )
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
-        internal_user_id = user['id']
+        # Get current secret for logging
+        current_secret = enhanced_2fa_service.get_2fa_secret(user_id)
+        if current_secret:
+            logger.info(f"🔓 Current secret: {current_secret[:8]}... (truncated)")
         
         # Verify 2FA code before disabling
         success, message = enhanced_2fa_service.verify_2fa_for_operation(
-            internal_user_id, 'disable_2fa', code
+            user_id, 'disable_2fa', code
         )
         
         if not success:
+            logger.error(f"❌ Failed to verify code for disable: {message}")
             return jsonify({'error': message}), 400
         
-        # Disable 2FA
-        if not enhanced_2fa_service.disable_2fa(internal_user_id):
+        logger.info(f"✅ Code verified successfully")
+        
+        # Disable 2FA using Firebase UID
+        if not enhanced_2fa_service.disable_2fa(user_id):
+            logger.error(f"❌ Failed to disable 2FA in database")
             return jsonify({'error': 'Failed to disable 2FA'}), 500
         
-        logger.info(f"2FA disabled for user: {internal_user_id}")
+        logger.info(f"✅ 2FA disabled successfully for user: {user_id}")
+        logger.info(f"✅ Secret cleared from database")
         
         return jsonify({
             'success': True,
@@ -219,33 +224,27 @@ def verify_2fa_login():
         code = data.get('code')
         session_id = data.get('session_id')
         
+        logger.info(f"🔐 Verifying 2FA login for user: {user_id}")
+        logger.info(f"🔐 Received code: {code}")
+        
         if not user_id or not code:
             return jsonify({'error': 'User ID and code are required'}), 400
         
-        # Get user's internal ID
-        user = rds_db.execute_query(
-            'SELECT id FROM users WHERE firebase_uid = %s',
-            (user_id,),
-            fetch_one=True
-        )
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
-        internal_user_id = user['id']
-        
-        # Get user's secret
-        secret = enhanced_2fa_service.get_2fa_secret(internal_user_id)
+        # Get user's secret using Firebase UID
+        secret = enhanced_2fa_service.get_2fa_secret(user_id)
         if not secret:
+            logger.error(f"❌ No 2FA secret found for user: {user_id}")
             return jsonify({'error': '2FA not enabled'}), 400
+        
+        logger.info(f"🔐 Found secret: {secret[:8]}... (truncated)")
         
         # Verify code
         if enhanced_2fa_service.verify_totp_code(secret, code):
             # Create active session
             if session_id:
-                enhanced_2fa_service.create_active_session(internal_user_id, session_id)
+                enhanced_2fa_service.create_active_session(user_id, session_id)
             
-            logger.info(f"2FA login verified for user: {internal_user_id}")
+            logger.info(f"✅ 2FA login verified for user: {user_id}")
             
             return jsonify({
                 'success': True,
@@ -253,15 +252,15 @@ def verify_2fa_login():
             }), 200
         
         # Try backup code
-        if enhanced_2fa_service.verify_backup_code(internal_user_id, code):
+        if enhanced_2fa_service.verify_backup_code(user_id, code):
             # Create active session
             if session_id:
-                enhanced_2fa_service.create_active_session(internal_user_id, session_id)
+                enhanced_2fa_service.create_active_session(user_id, session_id)
             
             # Get remaining backup codes
-            remaining = enhanced_2fa_service.get_remaining_backup_codes(internal_user_id)
+            remaining = enhanced_2fa_service.get_remaining_backup_codes(user_id)
             
-            logger.info(f"Backup code used for login by user: {internal_user_id}")
+            logger.info(f"Backup code used for login by user: {user_id}")
             
             return jsonify({
                 'success': True,
@@ -294,27 +293,15 @@ def verify_2fa_operation():
         if not code or not operation:
             return jsonify({'error': 'Code and operation are required'}), 400
         
-        # Get user's internal ID
-        user = rds_db.execute_query(
-            'SELECT id FROM users WHERE firebase_uid = %s',
-            (user_id,),
-            fetch_one=True
-        )
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
-        internal_user_id = user['id']
-        
-        # Verify 2FA for operation
+        # Verify 2FA for operation using Firebase UID
         success, message = enhanced_2fa_service.verify_2fa_for_operation(
-            internal_user_id, operation, code
+            user_id, operation, code
         )
         
         if not success:
             return jsonify({'error': message}), 400
         
-        logger.info(f"2FA verified for operation: {operation} by user: {internal_user_id}")
+        logger.info(f"2FA verified for operation: {operation} by user: {user_id}")
         
         return jsonify({
             'success': True,
@@ -348,9 +335,9 @@ def get_2fa_status():
             logger.error("❌ No X-User-ID header provided")
             return jsonify({'error': 'X-User-ID header is required'}), 400
         
-        # Get user's internal ID
+        # Get user email for logging
         user = rds_db.execute_query(
-            'SELECT id, email FROM users WHERE firebase_uid = %s',
+            'SELECT email FROM users WHERE firebase_uid = %s',
             (user_id,),
             fetch_one=True
         )
@@ -359,25 +346,24 @@ def get_2fa_status():
             logger.error(f"❌ User not found for Firebase UID: {user_id}")
             return jsonify({'error': 'User not found in database'}), 404
         
-        internal_user_id = user['id']
         user_email = user.get('email', 'unknown')
         
-        logger.info(f"✅ User found: {user_email} (internal ID: {internal_user_id})")
+        logger.info(f"✅ User found: {user_email} (Firebase UID: {user_id})")
         
         # Expire inactive sessions (10+ minutes old)
-        enhanced_2fa_service.expire_inactive_sessions(internal_user_id)
+        enhanced_2fa_service.expire_inactive_sessions(user_id)
         
-        # Check if 2FA is enabled
-        is_enabled = enhanced_2fa_service.is_2fa_enabled(internal_user_id)
+        # Check if 2FA is enabled using Firebase UID
+        is_enabled = enhanced_2fa_service.is_2fa_enabled(user_id)
         logger.info(f"🔐 2FA enabled for {user_email}: {is_enabled}")
         
         # Get remaining backup codes if enabled
         remaining_codes = 0
         if is_enabled:
-            remaining_codes = enhanced_2fa_service.get_remaining_backup_codes(internal_user_id)
+            remaining_codes = enhanced_2fa_service.get_remaining_backup_codes(user_id)
         
         # Check if 2FA required on next login
-        requires_on_login = enhanced_2fa_service.should_require_2fa_on_login(internal_user_id)
+        requires_on_login = enhanced_2fa_service.should_require_2fa_on_login(user_id)
         logger.info(f"🔐 2FA required on login for {user_email}: {requires_on_login}")
         
         return jsonify({
@@ -409,21 +395,9 @@ def regenerate_backup_codes():
         if not code:
             return jsonify({'error': 'Verification code is required'}), 400
         
-        # Get user's internal ID
-        user = rds_db.execute_query(
-            'SELECT id FROM users WHERE firebase_uid = %s',
-            (user_id,),
-            fetch_one=True
-        )
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
-        internal_user_id = user['id']
-        
-        # Verify 2FA code
+        # Verify 2FA code using Firebase UID
         success, message = enhanced_2fa_service.verify_2fa_for_operation(
-            internal_user_id, 'regenerate_backup_codes', code
+            user_id, 'regenerate_backup_codes', code
         )
         
         if not success:
@@ -436,17 +410,17 @@ def regenerate_backup_codes():
         import json
         backup_codes_data = [
             {
-                'hash': enhanced_2fa_service.hash_backup_code(code),
+                'hash': enhanced_2fa_service.hash_backup_code(bc),
                 'used': False
             }
-            for code in backup_codes
+            for bc in backup_codes
         ]
         
-        # Update database
-        query = "UPDATE users SET backup_codes = %s WHERE id = %s"
-        rds_db.execute_query(query, (json.dumps(backup_codes_data), internal_user_id))
+        # Update database using Firebase UID
+        query = "UPDATE users SET backup_codes = %s WHERE firebase_uid = %s"
+        rds_db.execute_query(query, (json.dumps(backup_codes_data), user_id))
         
-        logger.info(f"Backup codes regenerated for user: {internal_user_id}")
+        logger.info(f"Backup codes regenerated for user: {user_id}")
         
         return jsonify({
             'success': True,
@@ -481,23 +455,11 @@ def logout_with_2fa_tracking():
             except:
                 pass
         
-        # Get user's internal ID
-        user = rds_db.execute_query(
-            'SELECT id FROM users WHERE firebase_uid = %s',
-            (user_id,),
-            fetch_one=True
-        )
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
-        internal_user_id = user['id']
-        
-        # Track logout
+        # Track logout using Firebase UID
         if session_id:
-            enhanced_2fa_service.track_logout(internal_user_id, session_id)
+            enhanced_2fa_service.track_logout(user_id, session_id)
         
-        logger.info(f"User logged out: {internal_user_id}")
+        logger.info(f"User logged out: {user_id}")
         
         return jsonify({
             'success': True,
