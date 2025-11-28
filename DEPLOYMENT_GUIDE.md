@@ -18,10 +18,20 @@ Set these in your Render dashboard:
 SECRET_KEY=your-super-secret-key-here
 FLASK_ENV=production
 
-# Database
-NEON_DATABASE_URL=postgresql://username:password@host:port/database
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your-supabase-anon-key
+# AWS Configuration
+AWS_ACCESS_KEY_ID=your_aws_access_key
+AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+AWS_REGION=us-east-1
+
+# Database (AWS RDS)
+RDS_HOST=your-db-instance.region.rds.amazonaws.com
+RDS_PORT=5432
+RDS_DATABASE=meetingmind
+RDS_USER=postgres
+RDS_PASSWORD=your_secure_password
+
+# Storage (AWS S3)
+S3_BUCKET_NAME=meetingmind-storage
 
 # Google Calendar API
 GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com

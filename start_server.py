@@ -41,7 +41,10 @@ def check_requirements():
 def check_environment():
     """Check if required environment variables are set"""
     required_vars = [
-        'NEON_DATABASE_URL',
+        'RDS_HOST',
+        'RDS_USER',
+        'RDS_PASSWORD',
+        'RDS_DATABASE',
         'PORT',
         'ADMIN_EMAIL',
         'ADMIN_PASSWORD'
@@ -86,7 +89,8 @@ def main():
     print("📋 Server Configuration:")
     print(f"   Port: {port}")
     print(f"   Environment: {flask_env}")
-    print(f"   Database: {'✅ Configured' if os.getenv('NEON_DATABASE_URL') else '❌ Not configured'}")
+    print(f"   Database: {'✅ Configured' if os.getenv('RDS_HOST') else '❌ Not configured'}")
+    print(f"   Storage: {'✅ Configured' if os.getenv('S3_BUCKET_NAME') else '❌ Not configured'}")
     print(f"   Admin: {os.getenv('ADMIN_EMAIL', 'Not configured')}")
     print("\n" + "=" * 60 + "\n")
     

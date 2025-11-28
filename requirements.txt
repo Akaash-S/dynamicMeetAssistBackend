@@ -9,7 +9,6 @@ Flask-Limiter==3.5.0
 
 # Database
 psycopg2-binary==2.9.9
-supabase==2.6.0
 
 # AI and ML
 google-generativeai==0.3.2
@@ -53,3 +52,23 @@ sendgrid==6.11.0
 # For better performance and monitoring
 psutil==5.9.6
 prometheus-client==0.19.0
+
+# Chatbot Dependencies
+# Vector database for semantic search
+chromadb==0.4.22
+
+# Groq for LLM (already included above)
+# groq==0.4.1
+
+# ElevenLabs for text-to-speech
+elevenlabs==0.2.27
+
+# Local embeddings
+sentence-transformers==2.3.1
+
+# Property-based testing
+hypothesis==6.98.0
+
+# Testing framework
+pytest==7.4.3
+pytest-asyncio==0.21.1

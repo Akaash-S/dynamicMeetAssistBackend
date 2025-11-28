@@ -175,23 +175,17 @@ def check_database_health():
         }
 
 def check_storage_health():
-    """Check storage service connectivity"""
+    """Check AWS S3 storage service connectivity"""
     try:
-        # Test storage connectivity
-        # For Supabase, we can check if we can access the client
-        if hasattr(storage, 'client') and storage.client:
-            return {
-                'service': 'storage',
-                'status': 'healthy',
-                'provider': 'supabase',
-                'bucket': storage.bucket_name
-            }
-        else:
-            return {
-                'service': 'storage',
-                'status': 'unhealthy',
-                'error': 'Storage client not initialized'
-            }
+        # Test S3 connectivity
+        s3_health = s3_service.get_s3_health()
+        return {
+            'service': 'storage',
+            'status': 'healthy' if s3_health.get('status') == 'healthy' else 'unhealthy',
+            'provider': 'aws_s3',
+            'bucket': s3_health.get('bucket'),
+            'region': s3_health.get('region')
+        }
             
     except Exception as e:
         return {

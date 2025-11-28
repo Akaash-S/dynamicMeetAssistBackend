@@ -77,10 +77,20 @@ def create_app():
                     "X-API-Key",
                     "X-CSRFToken",
                     "X-User-ID",
-                    "X-Session-ID"
+                    "X-Session-ID",
+                    # Additional headers for voice file uploads
+                    "Content-Disposition",
+                    "Content-Length",
+                    "Cache-Control",
+                    "Pragma"
                 ],
                 "supports_credentials": False,
-                "max_age": 86400  # 24 hours
+                "max_age": 86400,  # 24 hours
+                "expose_headers": [
+                    "Content-Type",
+                    "Content-Length",
+                    "Content-Disposition"
+                ]
             }
         },
         "supports_credentials": False,
@@ -123,9 +133,10 @@ def create_app():
                 
                 # Set comprehensive CORS headers
                 response.headers['Access-Control-Allow-Methods'] = 'GET,POST,PUT,DELETE,OPTIONS,PATCH'
-                response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-Requested-With,Accept,Origin,X-API-Key,X-CSRFToken,X-User-ID,X-Session-ID'
+                response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-Requested-With,Accept,Origin,X-API-Key,X-CSRFToken,X-User-ID,X-Session-ID,Content-Disposition,Content-Length,Cache-Control,Pragma'
                 response.headers['Access-Control-Allow-Credentials'] = 'false'
                 response.headers['Access-Control-Max-Age'] = '86400'  # 24 hours
+                response.headers['Access-Control-Expose-Headers'] = 'Content-Type,Content-Length,Content-Disposition'
                 response.headers['Vary'] = 'Origin'
                 
                 # Handle preflight requests
@@ -138,7 +149,8 @@ def create_app():
             if flask_env == 'development':
                 response.headers['Access-Control-Allow-Origin'] = '*'
                 response.headers['Access-Control-Allow-Methods'] = 'GET,POST,PUT,DELETE,OPTIONS,PATCH'
-                response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-Requested-With,Accept,Origin,X-API-Key,X-CSRFToken,X-User-ID,X-Session-ID'
+                response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-Requested-With,Accept,Origin,X-API-Key,X-CSRFToken,X-User-ID,X-Session-ID,Content-Disposition,Content-Length,Cache-Control,Pragma'
+                response.headers['Access-Control-Expose-Headers'] = 'Content-Type,Content-Length,Content-Disposition'
             else:
                 # In production, don't set CORS headers on error
                 pass
@@ -190,10 +202,11 @@ def create_app():
                 else:
                     response.headers.add("Access-Control-Allow-Origin", origin or "*")
                 
-            response.headers.add('Access-Control-Allow-Headers', "Content-Type,Authorization,X-Requested-With,Accept,Origin,X-API-Key,X-CSRFToken,X-User-ID,X-Session-ID")
+            response.headers.add('Access-Control-Allow-Headers', "Content-Type,Authorization,X-Requested-With,Accept,Origin,X-API-Key,X-CSRFToken,X-User-ID,X-Session-ID,Content-Disposition,Content-Length,Cache-Control,Pragma")
             response.headers.add('Access-Control-Allow-Methods', "GET,POST,PUT,DELETE,OPTIONS,PATCH")
             response.headers.add('Access-Control-Allow-Credentials', "false")
             response.headers.add('Access-Control-Max-Age', "86400")
+            response.headers.add('Access-Control-Expose-Headers', "Content-Type,Content-Length,Content-Disposition")
             return response
     
     # Simple health endpoint (as requested)
@@ -251,6 +264,14 @@ def create_app():
     app.register_blueprint(google_calendar_bp, url_prefix='/api/calendar')
     app.register_blueprint(notifications_bp, url_prefix='/api/notifications')
     app.register_blueprint(auth_2fa_bp, url_prefix='/api')  # Enhanced 2FA with logout tracking and inactivity
+    
+    # Register chatbot blueprint
+    try:
+        from routes.chatbot import chatbot_bp
+        app.register_blueprint(chatbot_bp, url_prefix='/api/chatbot')
+        print("[INFO] Chatbot blueprint registered successfully")
+    except Exception as e:
+        print(f"[WARNING] Failed to register chatbot blueprint: {e}")
     
     # Register admin blueprints from admin directory
     try:

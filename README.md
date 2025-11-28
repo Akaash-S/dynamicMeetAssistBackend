@@ -6,9 +6,9 @@ A Flask-based REST API backend for the AI Meeting Assistant application with COR
 
 - **CORS Enabled**: Full CORS support for React frontend
 - **Health Monitoring**: Simple `/api/health` endpoint
-- **File Upload**: Audio file processing with Supabase storage
+- **File Upload**: Audio file processing with AWS S3 storage
 - **AI Processing**: Transcription (RapidAPI) + AI analysis (Gemini 2.0 Flash)
-- **Database**: PostgreSQL with Neon
+- **Database**: PostgreSQL with AWS RDS
 - **Deployment Ready**: Configured for Render deployment
 
 ## 🛠️ Quick Start
@@ -42,12 +42,20 @@ A Flask-based REST API backend for the AI Meeting Assistant application with COR
 ### Environment Variables
 
 ```env
-# Database
-NEON_DATABASE_URL=your_neon_database_url
+# AWS Configuration
+AWS_ACCESS_KEY_ID=your_aws_access_key
+AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+AWS_REGION=us-east-1
 
-# Storage
-SUPABASE_URL=your_supabase_url
-SUPABASE_KEY=your_supabase_key
+# Database (AWS RDS)
+RDS_HOST=your-db-instance.region.rds.amazonaws.com
+RDS_PORT=5432
+RDS_DATABASE=meetingmind
+RDS_USER=postgres
+RDS_PASSWORD=your_secure_password
+
+# Storage (AWS S3)
+S3_BUCKET_NAME=meetingmind-storage
 
 # AI Services
 RAPIDAPI_KEY=your_rapidapi_key
@@ -181,9 +189,10 @@ curl -X GET http://localhost:8000/api/health \
 ### Common Issues
 
 1. **CORS Errors**: Check that frontend URL is in CORS origins
-2. **Database Connection**: Verify NEON_DATABASE_URL
-3. **API Keys**: Ensure all required environment variables are set
-4. **Port Conflicts**: Change PORT environment variable
+2. **Database Connection**: Verify AWS RDS configuration (RDS_HOST, RDS_USER, RDS_PASSWORD, RDS_DATABASE)
+3. **Storage Issues**: Verify AWS S3 configuration (S3_BUCKET_NAME, AWS credentials)
+4. **API Keys**: Ensure all required environment variables are set
+5. **Port Conflicts**: Change PORT environment variable
 
 ### Logs
 

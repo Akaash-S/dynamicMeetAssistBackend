@@ -1,11 +1,15 @@
 import os
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import json
+import logging
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from google.auth.transport.requests import Request
+
+logger = logging.getLogger(__name__)
 
 class CalendarSyncService:
     def __init__(self):
@@ -13,8 +17,13 @@ class CalendarSyncService:
         self.client_secret = os.getenv('GOOGLE_CLIENT_SECRET')
         self.scopes = ['https://www.googleapis.com/auth/calendar']
 
-    def build_service(self, access_token: str, refresh_token: Optional[str] = None):
-        """Build Google Calendar service with OAuth credentials"""
+    def build_service_with_refresh(self, access_token: str, refresh_token: Optional[str] = None) -> Tuple[object, Optional[str]]:
+        """
+        Build Google Calendar service with automatic token refresh
+        
+        Returns:
+            Tuple of (service, new_access_token) where new_access_token is None if no refresh occurred
+        """
         try:
             creds = Credentials(
                 token=access_token,
@@ -25,16 +34,42 @@ class CalendarSyncService:
                 scopes=self.scopes
             )
             
+            # Check if credentials are expired and refresh if needed
+            if creds.expired and creds.refresh_token:
+                logger.info("Access token expired, attempting to refresh...")
+                try:
+                    creds.refresh(Request())
+                    logger.info("✅ Token refreshed successfully")
+                    new_access_token = creds.token
+                except Exception as refresh_error:
+                    logger.error(f"❌ Token refresh failed: {refresh_error}")
+                    raise ValueError("Google Calendar access has expired and could not be refreshed. Please reconnect your Google account in the settings.")
+            else:
+                new_access_token = None
+            
             service = build('calendar', 'v3', credentials=creds)
             
             # Test the service by making a simple call
             service.calendarList().list(maxResults=1).execute()
             
-            return service
+            return service, new_access_token
             
+        except ValueError:
+            # Re-raise ValueError as-is (token refresh issues)
+            raise
         except Exception as e:
-            print(f"❌ Failed to build calendar service: {e}")
-            raise e
+            error_msg = str(e)
+            if 'invalid_grant' in error_msg or 'Token has been expired or revoked' in error_msg:
+                logger.error(f"❌ Google Calendar tokens expired and cannot be refreshed: {e}")
+                raise ValueError("Google Calendar access has expired. Please reconnect your Google account in the settings.")
+            else:
+                logger.error(f"❌ Failed to build calendar service: {e}")
+                raise ValueError(f"Failed to connect to Google Calendar: {str(e)}")
+
+    def build_service(self, access_token: str, refresh_token: Optional[str] = None):
+        """Build Google Calendar service with OAuth credentials (legacy method)"""
+        service, _ = self.build_service_with_refresh(access_token, refresh_token)
+        return service
 
     def create_google_calendar_event(self, task: Dict, meeting_title: str, access_token: str, refresh_token: Optional[str] = None) -> Dict:
         try:
@@ -269,23 +304,45 @@ class CalendarSyncService:
             }
     
     def test_calendar_access(self, access_token: str, refresh_token: Optional[str] = None) -> Dict:
-        """Test if calendar access is working"""
+        """Test if calendar access is working and refresh token if needed"""
         try:
-            service = self.build_service(access_token, refresh_token)
+            service, new_access_token = self.build_service_with_refresh(access_token, refresh_token)
             
             # Try to list calendars
             calendar_list = service.calendarList().list(maxResults=1).execute()
             
-            return {
+            result = {
                 'success': True,
                 'message': 'Google Calendar access is working',
                 'calendar_count': len(calendar_list.get('items', []))
             }
             
-        except Exception as e:
+            # Include new access token if it was refreshed
+            if new_access_token:
+                result['new_access_token'] = new_access_token
+                result['token_refreshed'] = True
+                logger.info("✅ Calendar access verified and token refreshed")
+            else:
+                result['token_refreshed'] = False
+                logger.info("✅ Calendar access verified")
+            
+            return result
+            
+        except ValueError as e:
+            # Handle token expiration specifically
+            logger.warning(f"Calendar access failed: {e}")
             return {
                 'success': False,
-                'error': f'Calendar access test failed: {str(e)}'
+                'error': str(e),
+                'error_code': 'TOKEN_EXPIRED',
+                'action_required': 'reconnect_google_account'
+            }
+        except Exception as e:
+            logger.error(f"Calendar access test failed: {e}")
+            return {
+                'success': False,
+                'error': f'Calendar access test failed: {str(e)}',
+                'error_code': 'CALENDAR_ERROR'
             }
 
 calendar_service = CalendarSyncService()

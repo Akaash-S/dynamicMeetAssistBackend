@@ -23,17 +23,15 @@ class ConfigValidator:
         warnings = []
         is_valid = True
         
-        # Check database configuration
-        db_url = os.getenv('NEON_DATABASE_URL')
-        if not db_url or 'username:password@host:port' in db_url:
-            warnings.append("⚠️  Database URL not properly configured")
-            is_valid = False
+        # Check AWS RDS database configuration
+        rds_host = os.getenv('RDS_HOST')
+        rds_user = os.getenv('RDS_USER')
+        rds_password = os.getenv('RDS_PASSWORD')
+        rds_database = os.getenv('RDS_DATABASE')
         
-        # Check Supabase configuration
-        supabase_url = os.getenv('SUPABASE_URL')
-        supabase_key = os.getenv('SUPABASE_KEY')
-        if not supabase_url or not supabase_key:
-            warnings.append("⚠️  Supabase configuration missing (storage may not work)")
+        if not all([rds_host, rds_user, rds_password, rds_database]):
+            warnings.append("⚠️  AWS RDS database not properly configured")
+            is_valid = False
         
         # Check API keys
         gemini_key = os.getenv('GEMINI_API_KEY')
@@ -111,8 +109,8 @@ class ConfigValidator:
         return {
             "environment": os.getenv('FLASK_ENV', 'production'),
             "port": os.getenv('PORT', '5000'),
-            "database_configured": bool(os.getenv('NEON_DATABASE_URL')),
-            "storage_configured": bool(os.getenv('SUPABASE_URL') and os.getenv('SUPABASE_KEY')),
+            "database_configured": bool(os.getenv('RDS_HOST') and os.getenv('RDS_USER')),
+            "storage_configured": bool(os.getenv('S3_BUCKET_NAME')),
             "ai_configured": bool(os.getenv('GEMINI_API_KEY')),
             "transcription_configured": bool(os.getenv('RAPIDAPI_KEY')),
             "calendar_configured": bool(os.getenv('GOOGLE_CLIENT_ID')),

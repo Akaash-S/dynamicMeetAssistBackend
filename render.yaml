@@ -13,11 +13,23 @@ services:
         value: "2"
       - key: GUNICORN_TIMEOUT
         value: "120"
-      - key: NEON_DATABASE_URL
+      - key: AWS_ACCESS_KEY_ID
         sync: false
-      - key: SUPABASE_URL
+      - key: AWS_SECRET_ACCESS_KEY
         sync: false
-      - key: SUPABASE_KEY
+      - key: AWS_REGION
+        value: us-east-1
+      - key: RDS_HOST
+        sync: false
+      - key: RDS_PORT
+        value: "5432"
+      - key: RDS_DATABASE
+        sync: false
+      - key: RDS_USER
+        sync: false
+      - key: RDS_PASSWORD
+        sync: false
+      - key: S3_BUCKET_NAME
         sync: false
       - key: RAPIDAPI_KEY
         sync: false

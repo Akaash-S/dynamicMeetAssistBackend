@@ -8,6 +8,28 @@ google_calendar_bp = Blueprint('google_calendar', __name__)
 
 logger = logging.getLogger(__name__)
 
+
+def update_user_token_if_refreshed(user_id: str, test_result: dict) -> None:
+    """Helper function to update user token if it was refreshed"""
+    if test_result.get('success') and test_result.get('new_access_token'):
+        try:
+            update_token_query = "UPDATE users SET google_access_token = %s WHERE id = %s"
+            rds_db.execute_query(update_token_query, (test_result['new_access_token'], user_id))
+            logger.info(f"✅ Updated access token for user {user_id}")
+        except Exception as update_error:
+            logger.error(f"Failed to update access token in database: {update_error}")
+
+
+def get_user_tokens(user_id: str) -> tuple:
+    """Helper function to get user's Google tokens"""
+    get_token_query = "SELECT google_access_token, google_refresh_token FROM users WHERE id = %s"
+    token_result = rds_db.execute_query(get_token_query, (user_id,), fetch_one=True)
+    
+    if not token_result or not token_result.get('google_access_token'):
+        return None, None
+    
+    return token_result['google_access_token'], token_result.get('google_refresh_token')
+
 @google_calendar_bp.route('/test', methods=['GET'])
 @add_security_headers()
 def test_calendar_access():
@@ -35,7 +57,23 @@ def test_calendar_access():
         # Test calendar access
         test_result = calendar_service.test_calendar_access(access_token, refresh_token)
         
-        return jsonify(test_result), 200 if test_result['success'] else 400
+        # If token was refreshed, update it in the database
+        if test_result.get('success') and test_result.get('new_access_token'):
+            try:
+                update_token_query = "UPDATE users SET google_access_token = %s WHERE id = %s"
+                rds_db.execute_query(update_token_query, (test_result['new_access_token'], user_id))
+                logger.info(f"✅ Updated access token for user {user_id}")
+            except Exception as update_error:
+                logger.error(f"Failed to update access token in database: {update_error}")
+                # Don't fail the request, just log the error
+        
+        # Return appropriate status code based on error type
+        if test_result['success']:
+            return jsonify(test_result), 200
+        elif test_result.get('error_code') == 'TOKEN_EXPIRED':
+            return jsonify(test_result), 401  # Unauthorized - need to reconnect
+        else:
+            return jsonify(test_result), 400  # Bad request - other errors
         
     except Exception as e:
         logger.error(f"Calendar access test error: {str(e)}")
@@ -75,6 +113,17 @@ def sync_tasks_to_calendar():
                 'success': False,
                 'error': 'Google Calendar not connected for this user'
             }), 401
+        
+        # First test calendar access to refresh token if needed
+        test_result = calendar_service.test_calendar_access(access_token, refresh_token)
+        
+        if not test_result['success']:
+            return jsonify(test_result), 401 if test_result.get('error_code') == 'TOKEN_EXPIRED' else 400
+        
+        # Update token if it was refreshed
+        if test_result.get('new_access_token'):
+            access_token = test_result['new_access_token']
+            update_user_token_if_refreshed(meeting_result['user_id'], test_result)
         
         # Sync tasks to calendar
         sync_result = calendar_service.sync_multiple_tasks(
@@ -177,6 +226,38 @@ def delete_calendar_event(event_id):
             'success': False,
             'error': f'Event deletion failed: {str(e)}'
         }), 500
+
+@google_calendar_bp.route('/disconnect', methods=['POST'])
+@add_security_headers()
+def disconnect_calendar():
+    """Disconnect Google Calendar by clearing stored tokens"""
+    try:
+        user_id = request.args.get('user_id')
+        if not user_id:
+            return jsonify({'error': 'User ID is required'}), 400
+        
+        # Clear Google tokens from database
+        clear_tokens_query = """
+        UPDATE users 
+        SET google_access_token = NULL, google_refresh_token = NULL 
+        WHERE id = %s
+        """
+        rds_db.execute_query(clear_tokens_query, (user_id,))
+        
+        logger.info(f"✅ Cleared Google Calendar tokens for user {user_id}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Google Calendar disconnected successfully'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Calendar disconnect error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Failed to disconnect calendar: {str(e)}'
+        }), 500
+
 
 @google_calendar_bp.route('/create-event', methods=['POST'])
 @validate_json('credentials', 'task', 'meeting_title')
