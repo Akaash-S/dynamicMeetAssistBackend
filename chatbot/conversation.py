@@ -198,23 +198,33 @@ class ConversationManager:
             session_id: Session ID
         """
         try:
-            # Delete messages
-            delete_messages = "DELETE FROM chatbot_messages WHERE session_id = %s"
-            rds_db.execute_query(delete_messages, (session_id,))
-            
-            # Update session
-            update_session = """
-            UPDATE chatbot_sessions 
-            SET message_count = 0, updated_at = %s
-            WHERE id = %s
-            """
-            rds_db.execute_query(update_session, (datetime.utcnow(), session_id))
-            
-            logger.info(f"Cleared session {session_id}")
+            # Check if tables exist first
+            try:
+                # Delete messages
+                delete_messages = "DELETE FROM chatbot_messages WHERE session_id = %s"
+                rds_db.execute_query(delete_messages, (session_id,), fetch_one=False)
+                
+                # Update session
+                update_session = """
+                UPDATE chatbot_sessions 
+                SET message_count = 0, updated_at = %s
+                WHERE id = %s
+                """
+                rds_db.execute_query(update_session, (datetime.utcnow(), session_id), fetch_one=False)
+                
+                logger.info(f"Cleared session {session_id}")
+                
+            except Exception as table_error:
+                # If tables don't exist, that's okay - nothing to clear
+                if 'does not exist' in str(table_error).lower():
+                    logger.info(f"Chatbot tables don't exist yet - nothing to clear")
+                else:
+                    raise table_error
             
         except Exception as e:
             logger.error(f"Error clearing session: {e}")
-            raise e
+            # Don't raise - just log the error and continue
+            # This prevents 500 errors when clearing non-existent sessions
     
     def get_user_sessions(self, limit: int = 10) -> List[Dict]:
         """

@@ -31,11 +31,18 @@ class LLMService:
     
     def __init__(self):
         """Initialize Groq client and embedding model"""
-        api_key = os.getenv('GROQ_API_KEY')
+        # Try primary API key first, then fallback to secondary
+        api_key = os.getenv('GROQ_API_KEY') or os.getenv('GROQ_API_KEY_TWO')
         if not api_key:
-            raise ValueError("GROQ_API_KEY environment variable is required")
+            raise ValueError("GROQ_API_KEY or GROQ_API_KEY_TWO environment variable is required")
         
-        self.client = Groq(api_key=api_key)
+        try:
+            self.client = Groq(api_key=api_key)
+            logger.info(f"Groq client initialized successfully with model: {os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile')}")
+        except Exception as e:
+            logger.error(f"Failed to initialize Groq client: {e}")
+            raise ValueError(f"Failed to initialize Groq client: {e}")
+        
         self.model = os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile')
         self.temperature = float(os.getenv('GROQ_TEMPERATURE', '0.7'))  # Lower for more consistent responses
         self.max_tokens = int(os.getenv('GROQ_MAX_TOKENS', '2048'))  # Increased for better responses
@@ -95,6 +102,8 @@ class LLMService:
             
             messages.append({"role": "user", "content": prompt})
             
+            logger.debug(f"Generating response with model: {self.model}, temp: {temperature or self.temperature}")
+            
             completion = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -107,6 +116,12 @@ class LLMService:
             
             response = completion.choices[0].message.content
             
+            if not response or not response.strip():
+                logger.warning("Groq returned empty response")
+                raise ValueError("Empty response from Groq API")
+            
+            logger.info(f"Generated response: {len(response)} characters")
+            
             # Cache response
             if use_cache and cache_key:
                 if len(self._response_cache) >= self._cache_max_size:
@@ -117,8 +132,16 @@ class LLMService:
             return response
             
         except Exception as e:
-            logger.error(f"Error generating text: {e}")
-            raise e
+            logger.error(f"Error generating text with Groq: {e}", exc_info=True)
+            # Provide more specific error message
+            if "rate_limit" in str(e).lower():
+                raise ValueError("Groq API rate limit exceeded. Please try again in a moment.")
+            elif "api_key" in str(e).lower() or "authentication" in str(e).lower():
+                raise ValueError("Groq API authentication failed. Please check your API key.")
+            elif "model" in str(e).lower():
+                raise ValueError(f"Groq model '{self.model}' not available. Please check model name.")
+            else:
+                raise ValueError(f"Groq API error: {str(e)}")
     
     def generate_streaming(
         self,

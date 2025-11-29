@@ -103,17 +103,18 @@ class DataIndexer:
             raise e
     
     def index_meetings(self):
-        """Index user meetings and transcripts"""
+        """Index user meetings with full transcripts and extracted content"""
         try:
-            query = """
-            SELECT id, title, transcript, summary, status, created_at
+            # Get meetings with all relevant data
+            meetings_query = """
+            SELECT id, title, transcript, summary, status, duration, created_at, updated_at
             FROM meetings
             WHERE user_id = %s
             ORDER BY created_at DESC
             LIMIT 100
             """
             
-            meetings = rds_db.execute_query(query, (self.user_id,), fetch_all=True)
+            meetings = rds_db.execute_query(meetings_query, (self.user_id,), fetch_all=True)
             
             if not meetings:
                 logger.info("No meetings to index")
@@ -124,15 +125,104 @@ class DataIndexer:
             ids = []
             
             for meeting in meetings:
-                # Build document text
+                # Get timeline entries (extracted content) for this meeting
+                timeline_query = """
+                SELECT timestamp_minutes, event_type, title, content, participants
+                FROM timeline
+                WHERE meeting_id = %s
+                ORDER BY timestamp_minutes ASC
+                """
+                timeline_entries = rds_db.execute_query(timeline_query, (meeting['id'],), fetch_all=True)
+                
+                # Get tasks extracted from this meeting
+                tasks_query = """
+                SELECT title, description, status, priority, deadline, assigned_to
+                FROM tasks
+                WHERE meeting_id = %s
+                ORDER BY created_at ASC
+                """
+                meeting_tasks = rds_db.execute_query(tasks_query, (meeting['id'],), fetch_all=True)
+                
+                # Build comprehensive document text with ALL meeting content
                 doc_text = f"Meeting: {meeting['title']}"
-                if meeting['summary']:
-                    doc_text += f"\nSummary: {meeting['summary']}"
-                if meeting['transcript']:
-                    # Truncate long transcripts
-                    transcript = meeting['transcript'][:2000]
-                    doc_text += f"\nTranscript excerpt: {transcript}"
-                doc_text += f"\nStatus: {meeting['status']}"
+                
+                if meeting.get('created_at'):
+                    doc_text += f"\nDate: {meeting['created_at']}"
+                
+                if meeting.get('duration'):
+                    doc_text += f"\nDuration: {meeting['duration']} minutes"
+                
+                # Add full summary
+                if meeting.get('summary'):
+                    summary = meeting['summary']
+                    # Parse JSON summary if needed
+                    try:
+                        import json
+                        if isinstance(summary, str):
+                            summary_obj = json.loads(summary)
+                            if isinstance(summary_obj, dict):
+                                doc_text += f"\n\nSummary:"
+                                for key, value in summary_obj.items():
+                                    doc_text += f"\n{key}: {value}"
+                            else:
+                                doc_text += f"\n\nSummary: {summary}"
+                        else:
+                            doc_text += f"\n\nSummary: {summary}"
+                    except (json.JSONDecodeError, TypeError):
+                        doc_text += f"\n\nSummary: {summary}"
+                
+                # Add extracted timeline content (key moments, decisions, action items)
+                if timeline_entries:
+                    doc_text += f"\n\nExtracted Content ({len(timeline_entries)} items):"
+                    for entry in timeline_entries:
+                        minutes = int(entry['timestamp_minutes']) if entry['timestamp_minutes'] else 0
+                        seconds = int((entry['timestamp_minutes'] - minutes) * 60) if entry['timestamp_minutes'] else 0
+                        timestamp = f"{minutes:02d}:{seconds:02d}"
+                        
+                        doc_text += f"\n[{timestamp}] {entry['event_type']}: {entry['title']}"
+                        if entry.get('content'):
+                            doc_text += f" - {entry['content']}"
+                        if entry.get('participants'):
+                            participants = ', '.join(entry['participants']) if isinstance(entry['participants'], list) else str(entry['participants'])
+                            doc_text += f" (Participants: {participants})"
+                
+                # Add extracted tasks
+                if meeting_tasks:
+                    doc_text += f"\n\nExtracted Tasks ({len(meeting_tasks)} items):"
+                    for task in meeting_tasks:
+                        doc_text += f"\n- {task['title']}"
+                        if task.get('description'):
+                            doc_text += f": {task['description']}"
+                        doc_text += f" [Status: {task['status']}, Priority: {task['priority']}]"
+                        if task.get('assigned_to'):
+                            doc_text += f" (Assigned to: {task['assigned_to']})"
+                        if task.get('deadline'):
+                            doc_text += f" (Deadline: {task['deadline']})"
+                
+                # Add FULL transcript (not truncated) for complete context
+                if meeting.get('transcript'):
+                    transcript = meeting['transcript']
+                    # Include full transcript for comprehensive search
+                    # Split into chunks if too large (>10000 chars)
+                    if len(transcript) > 10000:
+                        doc_text += f"\n\nFull Transcript (Part 1 of 2):\n{transcript[:10000]}"
+                        # Create a second document for the rest
+                        doc_text_part2 = f"Meeting: {meeting['title']} (Transcript Continuation)"
+                        doc_text_part2 += f"\n\nFull Transcript (Part 2 of 2):\n{transcript[10000:]}"
+                        
+                        documents.append(doc_text_part2)
+                        metadatas.append({
+                            'type': 'meeting_transcript',
+                            'source_id': meeting['id'],
+                            'title': f"{meeting['title']} (Transcript Part 2)",
+                            'status': meeting['status'],
+                            'created_at': meeting['created_at'].isoformat() if meeting['created_at'] else None
+                        })
+                        ids.append(f"meeting_{meeting['id']}_transcript_2")
+                    else:
+                        doc_text += f"\n\nFull Transcript:\n{transcript}"
+                
+                doc_text += f"\n\nStatus: {meeting['status']}"
                 
                 documents.append(doc_text)
                 metadatas.append({
@@ -140,6 +230,8 @@ class DataIndexer:
                     'source_id': meeting['id'],
                     'title': meeting['title'],
                     'status': meeting['status'],
+                    'timeline_count': len(timeline_entries) if timeline_entries else 0,
+                    'task_count': len(meeting_tasks) if meeting_tasks else 0,
                     'created_at': meeting['created_at'].isoformat() if meeting['created_at'] else None
                 })
                 ids.append(f"meeting_{meeting['id']}")
@@ -150,7 +242,7 @@ class DataIndexer:
             # Add to vector store
             self.vector_store.add_documents(documents, metadatas, embeddings, ids)
             
-            logger.info(f"Indexed {len(documents)} meetings")
+            logger.info(f"Indexed {len(documents)} meeting documents (including {len([m for m in metadatas if m['type'] == 'meeting_transcript'])} transcript continuations)")
             
         except Exception as e:
             logger.error(f"Error indexing meetings: {e}")

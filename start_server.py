@@ -13,20 +13,21 @@ load_dotenv()
 
 def check_requirements():
     """Check if all required packages are installed"""
-    required_packages = [
-        'flask',
-        'flask_cors',
-        'psycopg2',
-        'python-dotenv',
-        'bcrypt'
-    ]
+    # Map package names to their import names
+    required_packages = {
+        'flask': 'flask',
+        'flask-cors': 'flask_cors',
+        'psycopg2': 'psycopg2',
+        'python-dotenv': 'dotenv',
+        'bcrypt': 'bcrypt'
+    }
     
     missing_packages = []
-    for package in required_packages:
+    for package_name, import_name in required_packages.items():
         try:
-            __import__(package.replace('-', '_'))
+            __import__(import_name)
         except ImportError:
-            missing_packages.append(package)
+            missing_packages.append(package_name)
     
     if missing_packages:
         print("❌ Missing required packages:")

@@ -29,13 +29,18 @@ class VectorStore:
         vector_store_path = os.getenv('VECTOR_STORE_PATH', './data/vectors')
         os.makedirs(vector_store_path, exist_ok=True)
         
-        self.client = chromadb.PersistentClient(
-            path=vector_store_path,
-            settings=Settings(
-                anonymized_telemetry=False,
-                allow_reset=True
+        try:
+            self.client = chromadb.PersistentClient(
+                path=vector_store_path,
+                settings=Settings(
+                    anonymized_telemetry=False,
+                    allow_reset=True
+                )
             )
-        )
+        except Exception as e:
+            logger.warning(f"Failed to initialize ChromaDB with settings, trying without: {e}")
+            # Fallback: try without settings if there's an issue
+            self.client = chromadb.PersistentClient(path=vector_store_path)
         
         # Create or get user-specific collection
         collection_name = f"user_{user_id.replace('-', '_')}"
@@ -101,10 +106,18 @@ class VectorStore:
             List of search results with documents and metadata
         """
         try:
-            # Always filter by user_id
-            where_filter = {"user_id": self.user_id}
+            # Build where filter - ChromaDB requires $and for multiple conditions
             if filter_metadata:
-                where_filter.update(filter_metadata)
+                # Multiple conditions - use $and operator
+                where_filter = {
+                    "$and": [
+                        {"user_id": self.user_id},
+                        *[{k: v} for k, v in filter_metadata.items()]
+                    ]
+                }
+            else:
+                # Single condition - simple format
+                where_filter = {"user_id": self.user_id}
             
             results = self.collection.query(
                 query_embeddings=[query_embedding],
