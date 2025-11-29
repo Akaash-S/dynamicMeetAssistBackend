@@ -192,7 +192,7 @@ class ConversationManager:
     
     def clear_session(self, session_id: str):
         """
-        Clear conversation history for a session
+        Clear conversation history for a session (keeps session, removes messages)
         
         Args:
             session_id: Session ID
@@ -225,6 +225,38 @@ class ConversationManager:
             logger.error(f"Error clearing session: {e}")
             # Don't raise - just log the error and continue
             # This prevents 500 errors when clearing non-existent sessions
+    
+    def delete_session(self, session_id: str):
+        """
+        Delete a conversation session completely (removes session and all messages)
+        
+        Args:
+            session_id: Session ID
+        """
+        try:
+            # Check if tables exist first
+            try:
+                # Delete messages first (foreign key constraint)
+                delete_messages = "DELETE FROM chatbot_messages WHERE session_id = %s"
+                rds_db.execute_query(delete_messages, (session_id,), fetch_one=False)
+                
+                # Delete session
+                delete_session = "DELETE FROM chatbot_sessions WHERE id = %s AND user_id = %s"
+                rds_db.execute_query(delete_session, (session_id, self.user_id), fetch_one=False)
+                
+                logger.info(f"Deleted session {session_id}")
+                
+            except Exception as table_error:
+                # If tables don't exist, that's okay - nothing to delete
+                if 'does not exist' in str(table_error).lower():
+                    logger.info(f"Chatbot tables don't exist yet - nothing to delete")
+                else:
+                    raise table_error
+            
+        except Exception as e:
+            logger.error(f"Error deleting session: {e}")
+            # Don't raise - just log the error and continue
+            # This prevents 500 errors when deleting non-existent sessions
     
     def get_user_sessions(self, limit: int = 10) -> List[Dict]:
         """

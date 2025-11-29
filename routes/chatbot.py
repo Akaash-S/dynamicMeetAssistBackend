@@ -319,7 +319,7 @@ def get_history():
 @require_firebase_auth
 def clear_history():
     """
-    Clear conversation history
+    Clear conversation history (keeps session, removes messages)
     
     Request body:
         - session_id: str (optional)
@@ -368,6 +368,61 @@ def clear_history():
         return jsonify({
             'success': True,
             'message': 'Clear history completed with warnings',
+            'warning': str(e)
+        }), 200
+
+
+@chatbot_bp.route('/sessions/<session_id>', methods=['DELETE'])
+@require_firebase_auth
+def delete_session(session_id: str):
+    """
+    Delete a conversation session completely
+    
+    Path params:
+        - session_id: str (required)
+    
+    Returns:
+        - success: bool
+    """
+    try:
+        current_user = request.current_user
+        
+        # Resolve user ID
+        user_id = _resolve_db_user_id(current_user['id'])
+        if not user_id:
+            logger.warning(f"Could not resolve user ID for: {current_user['id']}")
+            # Return success anyway - nothing to delete if user doesn't exist
+            return jsonify({
+                'success': True,
+                'message': 'No session to delete'
+            }), 200
+        
+        # Initialize chatbot service
+        try:
+            chatbot_service = ChatbotService(user_id)
+            
+            # Delete session
+            result = chatbot_service.delete_session(session_id)
+            
+            return jsonify({
+                'success': True,
+                'message': 'Session deleted successfully'
+            }), 200
+            
+        except Exception as service_error:
+            # Log error but return success - deleting non-existent data is okay
+            logger.warning(f"Error deleting session (non-critical): {service_error}")
+            return jsonify({
+                'success': True,
+                'message': 'Session deleted (or was already removed)'
+            }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in delete_session: {e}", exc_info=True)
+        # Return success with warning instead of 500 error
+        return jsonify({
+            'success': True,
+            'message': 'Delete session completed with warnings',
             'warning': str(e)
         }), 200
 

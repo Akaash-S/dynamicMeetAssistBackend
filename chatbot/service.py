@@ -626,7 +626,7 @@ CONVERSATION GUIDELINES:
     
     def clear_conversation(self, session_id: Optional[str] = None):
         """
-        Clear conversation history
+        Clear conversation history (keeps session, removes messages)
         
         Args:
             session_id: Optional session ID (if None, creates new session)
@@ -637,6 +637,20 @@ CONVERSATION GUIDELINES:
             return {'success': True}
         except Exception as e:
             logger.error(f"Error clearing conversation: {e}")
+            raise e
+    
+    def delete_session(self, session_id: str):
+        """
+        Delete a conversation session completely
+        
+        Args:
+            session_id: Session ID to delete
+        """
+        try:
+            self.conversation_manager.delete_session(session_id)
+            return {'success': True}
+        except Exception as e:
+            logger.error(f"Error deleting session: {e}")
             raise e
     
     def get_sessions(self, limit: int = 10) -> Dict:
