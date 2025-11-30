@@ -623,10 +623,13 @@ class EmailService:
         user_email: str,
         user_name: str,
         download_url: str,
-        expires_in_hours: int = 24
+        expires_in_hours: int = 24,
+        meetings_count: int = 0,
+        tasks_count: int = 0,
+        timeline_events_count: int = 0
     ) -> bool:
-        """Send notification with data export download link"""
-        subject = "📦 Your Data Export is Ready"
+        """Send notification with data export download link including detailed statistics"""
+        subject = "📦 Your Analytics Export is Ready"
         
         html_content = f"""
         <!DOCTYPE html>
@@ -638,6 +641,11 @@ class EmailService:
                 .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }}
                 .content {{ background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }}
                 .download-box {{ background: white; padding: 30px; border-radius: 8px; margin: 20px 0; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+                .stats-box {{ background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+                .stat-item {{ display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }}
+                .stat-item:last-child {{ border-bottom: none; }}
+                .stat-label {{ color: #6b7280; }}
+                .stat-value {{ font-weight: bold; color: #667eea; }}
                 .button {{ display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 6px; margin: 20px 0; font-weight: bold; }}
                 .warning-box {{ background: #fef3c7; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #f59e0b; }}
                 .footer {{ text-align: center; color: #6b7280; font-size: 12px; margin-top: 30px; }}
@@ -646,25 +654,42 @@ class EmailService:
         <body>
             <div class="container">
                 <div class="header">
-                    <h1>📦 Data Export Ready!</h1>
-                    <p>Your data is ready to download</p>
+                    <h1>📊 Analytics Export Ready!</h1>
+                    <p>Your comprehensive data export is ready to download</p>
                 </div>
                 <div class="content">
                     <p>Hi {user_name},</p>
-                    <p>Your data export has been prepared and is ready for download.</p>
+                    <p>Your analytics export has been prepared with comprehensive meeting data, tasks, and timeline events.</p>
+                    
+                    <div class="stats-box">
+                        <h3 style="margin: 0 0 15px 0; color: #667eea;">📈 Export Summary</h3>
+                        <div class="stat-item">
+                            <span class="stat-label">Total Meetings</span>
+                            <span class="stat-value">{meetings_count}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Extracted Tasks</span>
+                            <span class="stat-value">{tasks_count}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Timeline Events</span>
+                            <span class="stat-value">{timeline_events_count}</span>
+                        </div>
+                    </div>
                     
                     <div class="download-box">
-                        <h2 style="margin: 0 0 20px 0;">Your Export Includes:</h2>
-                        <ul style="text-align: left; display: inline-block;">
-                            <li>All meeting transcriptions</li>
-                            <li>Tasks and action items</li>
-                            <li>Timeline events</li>
-                            <li>Calendar sync data</li>
-                            <li>Account information</li>
+                        <h2 style="margin: 0 0 20px 0;">📦 Your Export Includes:</h2>
+                        <ul style="text-align: left; display: inline-block; margin: 0;">
+                            <li><strong>Meeting Analytics Dashboard</strong> - Visual charts and key metrics</li>
+                            <li><strong>Meeting Details</strong> - All transcriptions with dates and durations</li>
+                            <li><strong>Extracted Tasks</strong> - Complete task list with priorities and deadlines</li>
+                            <li><strong>Timeline Events</strong> - Key moments and important discussions</li>
+                            <li><strong>Productivity Insights</strong> - AI-generated recommendations</li>
+                            <li><strong>Resource Usage</strong> - Storage and processing metrics</li>
                         </ul>
                         
                         <a href="{download_url}" class="button">
-                            Download Your Data →
+                            📥 Download PDF Report →
                         </a>
                     </div>
                     
@@ -674,11 +699,13 @@ class EmailService:
                     </div>
                     
                     <p style="font-size: 14px; color: #6b7280;">
-                        The export is in JSON format and includes all your data in a structured, machine-readable format.
+                        💡 <strong>Tip:</strong> The export is in professional PDF format with visual charts, 
+                        making it perfect for sharing with your team or keeping records of your productivity.
                     </p>
                 </div>
                 <div class="footer">
-                    <p>AI Meeting Assistant | Data Privacy</p>
+                    <p>AI Meeting Assistant | Comprehensive Analytics & Data Privacy</p>
+                    <p>Your data is always secure and private.</p>
                 </div>
             </div>
         </body>
@@ -688,18 +715,26 @@ class EmailService:
         text_content = f"""
         Hi {user_name},
         
-        Your data export is ready for download!
+        Your analytics export is ready for download!
+        
+        Export Summary:
+        - Total Meetings: {meetings_count}
+        - Extracted Tasks: {tasks_count}
+        - Timeline Events: {timeline_events_count}
         
         Your export includes:
-        - All meeting transcriptions
-        - Tasks and action items
-        - Timeline events
-        - Calendar sync data
-        - Account information
+        - Meeting Analytics Dashboard with visual charts
+        - Complete meeting details with transcriptions
+        - Extracted tasks with priorities and deadlines
+        - Timeline events with key moments
+        - Productivity insights and recommendations
+        - Resource usage metrics
         
         Download link: {download_url}
         
         This link will expire in {expires_in_hours} hours.
+        
+        The export is in professional PDF format, perfect for sharing or record-keeping.
         
         Best regards,
         AI Meeting Assistant Team
