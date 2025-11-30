@@ -2,7 +2,7 @@
 
 ## 🚀 Base URL
 ```
-Development: http://localhost:8000
+Development: https://dynamicmeetassistbackend-1.onrender.com
 Production: https://your-domain.com
 ```
 
@@ -348,7 +348,7 @@ GET /api/health/routes
 #### 1. API Client Setup
 ```typescript
 // src/services/api.ts
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = 'https://dynamicmeetassistbackend-1.onrender.com';
 
 class ApiClient {
   private baseURL: string;

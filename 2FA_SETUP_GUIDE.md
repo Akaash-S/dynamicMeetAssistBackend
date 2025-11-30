@@ -44,7 +44,7 @@ TWILIO_PHONE_NUMBER=+1234567890
 # App Configuration
 APP_NAME=AI Meeting Assistant
 APP_ISSUER=AI Meeting Assistant
-BACKEND_URL=http://localhost:8000
+BACKEND_URL=https://dynamicmeetassistbackend-1.onrender.com
 ```
 
 ## Setup Steps
@@ -140,7 +140,7 @@ EMAIL_PASSWORD=your-mailgun-password
 
 #### Test Email 2FA:
 ```bash
-curl -X POST http://localhost:8000/api/2fa/email/send \
+curl -X POST https://dynamicmeetassistbackend-1.onrender.com/api/2fa/email/send \
   -H "Content-Type: application/json" \
   -H "X-User-ID: your-user-id" \
   -d '{"email": "user@example.com"}'
@@ -148,7 +148,7 @@ curl -X POST http://localhost:8000/api/2fa/email/send \
 
 #### Test SMS 2FA:
 ```bash
-curl -X POST http://localhost:8000/api/2fa/sms/send \
+curl -X POST https://dynamicmeetassistbackend-1.onrender.com/api/2fa/sms/send \
   -H "Content-Type: application/json" \
   -H "X-User-ID: your-user-id" \
   -d '{"phoneNumber": "+1234567890"}'
@@ -156,7 +156,7 @@ curl -X POST http://localhost:8000/api/2fa/sms/send \
 
 #### Test Authenticator App Setup:
 ```bash
-curl -X POST http://localhost:8000/api/2fa/app/setup \
+curl -X POST https://dynamicmeetassistbackend-1.onrender.com/api/2fa/app/setup \
   -H "X-User-ID: your-user-id"
 ```
 
@@ -296,10 +296,10 @@ logger.error(f"Email send failed: {error}")
 ### Periodic Cleanup (Run Daily)
 ```bash
 # Cleanup expired verification codes
-curl -X POST http://localhost:8000/api/2fa/cleanup
+curl -X POST https://dynamicmeetassistbackend-1.onrender.com/api/2fa/cleanup
 
 # Cleanup expired exports
-curl -X POST http://localhost:8000/api/cleanup-exports
+curl -X POST https://dynamicmeetassistbackend-1.onrender.com/api/cleanup-exports
 ```
 
 ### Database Maintenance

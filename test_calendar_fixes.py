@@ -9,7 +9,7 @@ import requests
 import json
 
 # Test configuration
-BASE_URL = "http://localhost:8000"
+BASE_URL = "https://dynamicmeetassistbackend-1.onrender.com"
 TEST_USER_ID = "6f9015e7-f4c1-4353-ac33-3aeb727158e7"
 
 def test_calendar_token_expiration():

@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 
 # Test configuration
-BASE_URL = "http://localhost:8000"
+BASE_URL = "https://dynamicmeetassistbackend-1.onrender.com"
 TEST_USER_ID = "test-user-123"
 TEST_TOKEN = "test-token"
 

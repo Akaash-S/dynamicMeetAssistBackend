@@ -8,7 +8,7 @@ import requests
 import json
 
 # Configuration
-BASE_URL = "http://localhost:8000"
+BASE_URL = "https://dynamicmeetassistbackend-1.onrender.com"
 TEST_USER_ID = "test-user-123"
 
 # Base headers (without Content-Type for GET requests)

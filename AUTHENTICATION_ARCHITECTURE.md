@@ -333,7 +333,7 @@ def health_check():
 - ❌ Backend does NOT verify OAuth tokens
 - ❌ Email/Password login NOT available
 
-**API Base URL:** `http://localhost:8000/api/`
+**API Base URL:** `https://dynamicmeetassistbackend-1.onrender.com/api/`
 
 **Backend Endpoints (Data Management Only):**
 - `/api/auth/verify` - Store/update user in database (NOT OAuth verification)
@@ -374,7 +374,7 @@ def health_check():
 - ✅ No dependency on external OAuth
 - ❌ Google Sign-In NOT available
 
-**API Base URL:** `http://localhost:8000/api/admin/`
+**API Base URL:** `https://dynamicmeetassistbackend-1.onrender.com/api/admin/`
 
 **Backend Endpoints (Full Authentication + Data):**
 - `/api/admin/auth/login` - Verify credentials & generate JWT
@@ -515,7 +515,7 @@ WHERE email = 'admin@example.com';
 ### Test Client Authentication:
 ```bash
 # Register/login client user
-curl -X POST http://localhost:8000/api/auth/verify \
+curl -X POST https://dynamicmeetassistbackend-1.onrender.com/api/auth/verify \
   -H "Content-Type: application/json" \
   -d '{
     "firebase_uid": "test_uid",
@@ -527,7 +527,7 @@ curl -X POST http://localhost:8000/api/auth/verify \
 ### Test Admin Authentication:
 ```bash
 # Admin login
-curl -X POST http://localhost:8000/api/admin/auth/login \
+curl -X POST https://dynamicmeetassistbackend-1.onrender.com/api/admin/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "email": "admin@example.com",

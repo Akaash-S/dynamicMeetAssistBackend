@@ -263,14 +263,14 @@ VITE_FIREBASE_MESSAGING_SENDER_ID=123456789
 VITE_FIREBASE_APP_ID=1:123456789:web:abcdef123456
 
 # Backend API
-VITE_API_BASE_URL=http://localhost:8000
+VITE_API_BASE_URL=https://dynamicmeetassistbackend-1.onrender.com
 ```
 
 ### Admin App Environment Variables
 
 ```env
 # Backend API
-VITE_API_BASE_URL=http://localhost:8000
+VITE_API_BASE_URL=https://dynamicmeetassistbackend-1.onrender.com
 
 # No Firebase config needed - admin uses email/password
 ```

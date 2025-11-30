@@ -35,7 +35,7 @@ A Flask-based REST API backend for the AI Meeting Assistant application with COR
 
 4. **Test Health Endpoint**
    ```bash
-   curl http://localhost:8000/api/health
+   curl https://dynamicmeetassistbackend-1.onrender.com/api/health
    # Response: {"status": "ok"}
    ```
 
@@ -155,15 +155,15 @@ backend/
 
 ```bash
 # Test simple health endpoint
-curl -X GET http://localhost:8000/api/health
+curl -X GET https://dynamicmeetassistbackend-1.onrender.com/api/health
 
 # Test CORS preflight
-curl -X OPTIONS http://localhost:8000/api/health \
+curl -X OPTIONS https://dynamicmeetassistbackend-1.onrender.com/api/health \
   -H "Origin: http://localhost:8080" \
   -H "Access-Control-Request-Method: GET"
 
 # Test cross-origin request
-curl -X GET http://localhost:8000/api/health \
+curl -X GET https://dynamicmeetassistbackend-1.onrender.com/api/health \
   -H "Origin: http://localhost:8080"
 ```
 
@@ -201,7 +201,7 @@ curl -X GET http://localhost:8000/api/health \
 python app.py
 
 # Check health status
-curl http://localhost:8000/api/health
+curl https://dynamicmeetassistbackend-1.onrender.com/api/health
 ```
 
 ## 📝 License

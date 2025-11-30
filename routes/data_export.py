@@ -120,7 +120,7 @@ def request_data_export():
             json.dump(export_data, f, indent=2, default=str)
         
         # Generate download URL (adjust based on your deployment)
-        base_url = os.getenv('BACKEND_URL', 'http://localhost:8000')
+        base_url = os.getenv('BACKEND_URL', 'https://dynamicmeetassistbackend-1.onrender.com')
         download_url = f"{base_url}/api/download-export/{export_id}"
         
         # Send email with download link

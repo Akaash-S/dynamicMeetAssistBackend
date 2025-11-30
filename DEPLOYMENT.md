@@ -259,10 +259,10 @@ jobs:
 
 ```bash
 # Health check
-curl http://localhost:8000/api/health
+curl https://dynamicmeetassistbackend-1.onrender.com/api/health
 
 # Test authentication
-curl -X POST http://localhost:8000/api/auth/login \
+curl -X POST https://dynamicmeetassistbackend-1.onrender.com/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"test@example.com","password":"password"}'
 
