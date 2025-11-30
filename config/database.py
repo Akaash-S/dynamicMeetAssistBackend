@@ -10,9 +10,18 @@ load_dotenv()
 
 class Database:
     def __init__(self):
-        self.connection_string = os.getenv('RDS_HOST')
-        if not self.connection_string:
-            raise ValueError("RDS_HOST environment variable is required")
+        # Build proper PostgreSQL connection string
+        rds_host = os.getenv('RDS_HOST')
+        rds_port = os.getenv('RDS_PORT', '5432')
+        rds_database = os.getenv('RDS_DATABASE') or os.getenv('RDS_DB_NAME')
+        rds_user = os.getenv('RDS_USER')
+        rds_password = os.getenv('RDS_PASSWORD')
+        
+        if not all([rds_host, rds_database, rds_user, rds_password]):
+            raise ValueError("RDS database credentials not fully configured. Required: RDS_HOST, RDS_DATABASE, RDS_USER, RDS_PASSWORD")
+        
+        # Build connection string in PostgreSQL DSN format
+        self.connection_string = f"host={rds_host} port={rds_port} dbname={rds_database} user={rds_user} password={rds_password} sslmode=require"
         
         # Connection pool configuration
         self.min_connections = int(os.getenv('DB_MIN_CONNECTIONS', 1))

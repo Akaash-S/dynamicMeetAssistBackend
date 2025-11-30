@@ -909,3 +909,92 @@ def verify_google_oauth():
         
     except Exception as e:
         return jsonify({'error': f'Google OAuth verification failed: {str(e)}'}), 500
+
+
+@auth_bp.route('/desktop-login', methods=['POST'])
+@add_security_headers()
+@validate_json('idToken', 'user')
+def desktop_login():
+    """
+    Handle desktop app authentication
+    Verifies Google ID token and creates/updates user session
+    """
+    try:
+        data = request.get_json()
+        
+        id_token = data['idToken']
+        user_info = data['user']
+        access_token = data.get('accessToken')
+        
+        email = RequestValidator.sanitize_string(user_info.get('email', ''), 255)
+        name = RequestValidator.sanitize_string(user_info.get('name', ''), 255) or email.split('@')[0]
+        google_id = user_info.get('id')
+        
+        print(f'Backend: Desktop login request - email: {email}')
+        
+        # Validate email format
+        if not RequestValidator.validate_email(email):
+            return jsonify({'error': 'Invalid email format'}), 400
+        
+        # Check if user exists
+        existing_user = None
+        email_query = "SELECT * FROM users WHERE email = %s"
+        email_result = rds_db.execute_query(email_query, [email], fetch_all=True)
+        
+        if email_result:
+            existing_user = email_result[0]
+            print(f'Backend: Desktop - Found existing user: {email}')
+            
+            # Update user with latest info
+            update_query = """
+            UPDATE users 
+            SET name = %s, auth_provider = 'google_oauth', 
+                google_oauth_id = %s, google_access_token = %s,
+                updated_at = %s
+            WHERE id = %s
+            """
+            
+            rds_db.execute_query(update_query, (
+                name, google_id, access_token,
+                datetime.utcnow(), existing_user['id']
+            ))
+            
+            user_id = existing_user['id']
+            is_new_user = False
+        else:
+            # Create new user
+            user_id = str(uuid.uuid4())
+            print(f'Backend: Desktop - Creating new user: {email}')
+            
+            insert_query = """
+            INSERT INTO users (id, google_oauth_id, email, name, auth_provider, 
+                             google_access_token, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            
+            rds_db.execute_query(insert_query, (
+                user_id, google_id, email, name, 'google_oauth',
+                access_token, datetime.utcnow(), datetime.utcnow()
+            ))
+            
+            is_new_user = True
+        
+        # Return success with user info
+        return jsonify({
+            'success': True,
+            'user': {
+                'id': user_id,
+                'email': email,
+                'name': name,
+                'google_oauth_id': google_id,
+                'auth_provider': 'google_oauth'
+            },
+            'is_new_user': is_new_user
+        }), 200
+        
+    except Exception as e:
+        logger.error(f'Desktop login error: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': f'Desktop login failed: {str(e)}'
+        }), 500
