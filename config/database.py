@@ -36,15 +36,16 @@ class Database:
         """Initialize the connection pool"""
         try:
             # Connection tuning for managed Postgres (Neon/Render): keepalives + SSL
+            # TCP Keepalives prevent idle connections from being closed by network timeouts
             self._pool = psycopg2.pool.ThreadedConnectionPool(
                 minconn=self.min_connections,
                 maxconn=self.max_connections,
                 dsn=self.connection_string,
                 cursor_factory=RealDictCursor,
-                keepalives=1,
-                keepalives_idle=30,
-                keepalives_interval=10,
-                keepalives_count=5,
+                keepalives=1,          # Enable TCP keepalives
+                keepalives_idle=60,    # Send probe after 60 seconds of idle time
+                keepalives_interval=20, # Interval between probes is 20 seconds
+                keepalives_count=5,    # Number of failed probes before dropping connection
                 sslmode='require'
             )
             print(f"[SUCCESS] Database connection pool initialized: {self.min_connections}-{self.max_connections} connections")
@@ -68,7 +69,12 @@ class Database:
                     pass
                 return psycopg2.connect(
                     self.connection_string,
-                    cursor_factory=RealDictCursor
+                    cursor_factory=RealDictCursor,
+                    keepalives=1,          # Enable TCP keepalives
+                    keepalives_idle=60,    # Send probe after 60 seconds of idle time
+                    keepalives_interval=20, # Interval between probes is 20 seconds
+                    keepalives_count=5,    # Number of failed probes before dropping connection
+                    sslmode='require'
                 )
             return conn
         except Exception as e:
@@ -77,10 +83,10 @@ class Database:
             return psycopg2.connect(
                 self.connection_string,
                 cursor_factory=RealDictCursor,
-                keepalives=1,
-                keepalives_idle=30,
-                keepalives_interval=10,
-                keepalives_count=5,
+                keepalives=1,          # Enable TCP keepalives
+                keepalives_idle=60,    # Send probe after 60 seconds of idle time
+                keepalives_interval=20, # Interval between probes is 20 seconds
+                keepalives_count=5,    # Number of failed probes before dropping connection
                 sslmode='require'
             )
     

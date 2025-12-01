@@ -102,13 +102,18 @@ class AWSAutoSetup:
                 import psycopg2
                 
                 # Get a raw connection (not from pool)
+                # TCP Keepalives prevent idle connections from being closed
                 conn = psycopg2.connect(
                     host=rds_db.db_host,
                     port=rds_db.db_port,
                     database=rds_db.db_name,
                     user=rds_db.db_user,
                     password=rds_db.db_password,
-                    sslmode=rds_db.db_ssl_mode
+                    sslmode=rds_db.db_ssl_mode,
+                    keepalives=1,          # Enable TCP keepalives
+                    keepalives_idle=60,    # Send probe after 60 seconds of idle time
+                    keepalives_interval=20, # Interval between probes is 20 seconds
+                    keepalives_count=5     # Number of failed probes before dropping connection
                 )
                 
                 # Set autocommit to handle CREATE statements properly

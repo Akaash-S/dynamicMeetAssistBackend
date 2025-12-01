@@ -33,7 +33,7 @@ print(f"  Database: {rds_database}")
 print(f"  User: {rds_user}")
 
 try:
-    # Connect to RDS
+    # Connect to RDS with TCP keepalives to prevent idle connection timeouts
     conn = psycopg2.connect(
         host=rds_host,
         port=rds_port,
@@ -41,7 +41,11 @@ try:
         user=rds_user,
         password=rds_password,
         sslmode='prefer',
-        connect_timeout=10
+        connect_timeout=10,
+        keepalives=1,          # Enable TCP keepalives
+        keepalives_idle=60,    # Send probe after 60 seconds of idle time
+        keepalives_interval=20, # Interval between probes is 20 seconds
+        keepalives_count=5     # Number of failed probes before dropping connection
     )
     
     print("✓ Connected to RDS successfully")

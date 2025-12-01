@@ -47,6 +47,8 @@ class RDSDatabase:
         """Initialize connection pool"""
         try:
             logger.info(f"Initializing RDS connection pool to {self.db_host}:{self.db_port}/{self.db_name}")
+            # TCP Keepalives prevent idle connections from being closed by network timeouts
+            # This is critical for Render backend to prevent "SSL SYSCALL error: EOF detected"
             self.connection_pool = psycopg2.pool.ThreadedConnectionPool(
                 self.min_connections,
                 self.max_connections,
@@ -57,7 +59,11 @@ class RDSDatabase:
                 password=self.db_password,
                 sslmode=self.db_ssl_mode,
                 cursor_factory=RealDictCursor,
-                connect_timeout=10  # 10 second timeout
+                connect_timeout=10,   # 10 second timeout
+                keepalives=1,          # Enable TCP keepalives
+                keepalives_idle=60,    # Send probe after 60 seconds of idle time
+                keepalives_interval=20, # Interval between probes is 20 seconds
+                keepalives_count=5     # Number of failed probes before dropping connection
             )
             logger.info("✅ RDS connection pool initialized successfully")
         except psycopg2.OperationalError as e:
@@ -191,6 +197,19 @@ class RDSDatabase:
                 'error': str(e),
                 'configured': True
             }
+    
+    def test_connection(self):
+        """Test database connection (for compatibility with auth routes)"""
+        try:
+            health = self.health_check()
+            if health['status'] == 'healthy':
+                return True
+            else:
+                logger.warning(f"Database connection test failed: {health.get('error', 'Unknown error')}")
+                return False
+        except Exception as e:
+            logger.error(f"Database connection test error: {e}")
+            return False
     
     def close_all_connections(self):
         """Close all connections in the pool"""
