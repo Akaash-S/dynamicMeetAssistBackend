@@ -180,6 +180,20 @@ def get_upcoming_tasks():
         }), 200
         
     except Exception as e:
+        # Log full traceback for server diagnostics
+        logger.error(f"Error in get_upcoming_tasks: {e}")
+        logger.error(traceback.format_exc())
+        
+        msg = str(e).lower()
+        # If tasks table (or referenced columns) do not exist yet, fail gracefully
+        if 'relation \"tasks\" does not exist' in msg or 'relation \'tasks\'' in msg:
+            logger.warning("Tasks table does not exist yet. Returning empty upcoming_tasks response.")
+            return jsonify({
+                'upcoming_tasks': [],
+                'total': 0,
+                'days_ahead': int(request.args.get('days', 30))
+            }), 200
+        
         return jsonify({'error': f'Failed to get upcoming tasks: {str(e)}'}), 500
 
 @tasks_bp.route('/stats', methods=['GET'])
