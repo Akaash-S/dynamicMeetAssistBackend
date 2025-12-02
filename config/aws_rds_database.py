@@ -33,6 +33,22 @@ class RDSDatabase:
         
         self.connection_pool = None
         
+        # Common connection kwargs so we reuse identical keepalive settings everywhere
+        self._connection_kwargs = dict(
+            host=self.db_host,
+            port=self.db_port,
+            database=self.db_name,
+            user=self.db_user,
+            password=self.db_password,
+            sslmode=self.db_ssl_mode,
+            cursor_factory=RealDictCursor,
+            connect_timeout=10,
+            keepalives=1,           # Enable TCP keepalives
+            keepalives_idle=60,     # Send probe after 60 seconds of idle time
+            keepalives_interval=20, # Interval between probes is 20 seconds
+            keepalives_count=5      # Number of failed probes before dropping connection
+        )
+        
         if all([self.db_host, self.db_name, self.db_user, self.db_password]):
             try:
                 self._initialize_pool()
@@ -52,18 +68,7 @@ class RDSDatabase:
             self.connection_pool = psycopg2.pool.ThreadedConnectionPool(
                 self.min_connections,
                 self.max_connections,
-                host=self.db_host,
-                port=self.db_port,
-                database=self.db_name,
-                user=self.db_user,
-                password=self.db_password,
-                sslmode=self.db_ssl_mode,
-                cursor_factory=RealDictCursor,
-                connect_timeout=10,   # 10 second timeout
-                keepalives=1,          # Enable TCP keepalives
-                keepalives_idle=60,    # Send probe after 60 seconds of idle time
-                keepalives_interval=20, # Interval between probes is 20 seconds
-                keepalives_count=5     # Number of failed probes before dropping connection
+                **self._connection_kwargs
             )
             logger.info("✅ RDS connection pool initialized successfully")
         except psycopg2.OperationalError as e:
@@ -102,6 +107,16 @@ class RDSDatabase:
         conn = None
         try:
             conn = self.connection_pool.getconn()
+            
+            # Replace closed/broken connections
+            if getattr(conn, 'closed', 0):
+                logger.warning("Connection from pool was closed. Replacing with a new connection...")
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                conn = psycopg2.connect(**self._connection_kwargs)
+            
             yield conn
         finally:
             if conn:
@@ -123,13 +138,13 @@ class RDSDatabase:
                 cursor.close()
     
     def execute_query(self, query: str, params: tuple = None, fetch_one=False, fetch_all=False):
-        """Execute a query and return results"""
+        """Execute a query and return results (with automatic retry on closed connections)"""
         # Ensure pool is initialized
         if not self.connection_pool:
             logger.warning("Connection pool not initialized in execute_query, attempting to initialize...")
             self._initialize_pool()
-            
-        try:
+        
+        def _run_query():
             with self.get_cursor(commit=not (fetch_one or fetch_all)) as cursor:
                 cursor.execute(query, params)
                 
@@ -139,6 +154,22 @@ class RDSDatabase:
                     return cursor.fetchall()
                 else:
                     return cursor.rowcount
+        
+        try:
+            return _run_query()
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            msg = str(e).lower()
+            if any(keyword in msg for keyword in ['server closed the connection', 'connection already closed', 'closed the connection unexpectedly']):
+                logger.warning("Database connection closed detected. Reinitializing pool and retrying...")
+                try:
+                    if self.connection_pool:
+                        self.connection_pool.closeall()
+                except Exception:
+                    pass
+                self._initialize_pool()
+                return _run_query()
+            logger.error(f"Operational/Interface error executing query: {e}")
+            raise
         except Exception as e:
             logger.error(f"Error executing query: {e}")
             raise
@@ -201,14 +232,13 @@ class RDSDatabase:
     def test_connection(self):
         """Test database connection (for compatibility with auth routes)"""
         try:
-            health = self.health_check()
-            if health['status'] == 'healthy':
-                return True
-            else:
-                logger.warning(f"Database connection test failed: {health.get('error', 'Unknown error')}")
-                return False
+            # Simple query via connection directly to catch closed connections
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+            return True
         except Exception as e:
-            logger.error(f"Database connection test error: {e}")
+            logger.error(f"Database connection test failed: {e}")
             return False
     
     def close_all_connections(self):
