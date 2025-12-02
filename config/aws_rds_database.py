@@ -22,7 +22,9 @@ class RDSDatabase:
         self.db_name = os.getenv('RDS_DATABASE') or os.getenv('RDS_DB_NAME')
         self.db_user = os.getenv('RDS_USER')
         self.db_password = os.getenv('RDS_PASSWORD')
-        self.db_ssl_mode = os.getenv('RDS_SSL_MODE', 'prefer')
+        # Use 'require' for Render to avoid SSL handshake issues
+        # 'prefer' can cause "SSL SYSCALL error: EOF detected" on some platforms
+        self.db_ssl_mode = os.getenv('RDS_SSL_MODE', 'require')
         
         # Debug: Print what we loaded
         logger.info(f"🔍 RDS Config: host={self.db_host}, port={self.db_port}, db={self.db_name}, user={self.db_user}")
@@ -159,8 +161,17 @@ class RDSDatabase:
             return _run_query()
         except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
             msg = str(e).lower()
-            if any(keyword in msg for keyword in ['server closed the connection', 'connection already closed', 'closed the connection unexpectedly']):
-                logger.warning("Database connection closed detected. Reinitializing pool and retrying...")
+            # Handle connection closed, SSL errors, and EOF errors
+            if any(keyword in msg for keyword in [
+                'server closed the connection', 
+                'connection already closed', 
+                'closed the connection unexpectedly',
+                'ssl syscall error',
+                'ssl error',
+                'eof detected',
+                'bad record mac'
+            ]):
+                logger.warning(f"Database connection issue detected: {msg[:100]}. Reinitializing pool and retrying...")
                 try:
                     if self.connection_pool:
                         self.connection_pool.closeall()
