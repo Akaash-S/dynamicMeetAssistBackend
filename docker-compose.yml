@@ -9,11 +9,18 @@ services:
     restart: unless-stopped
     ports:
       - "${PORT:-8000}:8000"
+    env_file: .env
     environment:
       # Flask Configuration
       - FLASK_ENV=production
       - SECRET_KEY=${SECRET_KEY}
+      - PORT=${PORT:-8000}
       
+      # Admin Configuration
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ADMIN_NAME=${ADMIN_NAME}
+
       # Database Configuration (AWS RDS)
       - DB_HOST=${DB_HOST}
       - DB_PORT=${DB_PORT:-5432}
@@ -27,11 +34,6 @@ services:
       - AWS_REGION=${AWS_REGION:-us-east-1}
       - S3_BUCKET_NAME=${S3_BUCKET_NAME}
       
-      # Firebase Configuration
-      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
-      - FIREBASE_PRIVATE_KEY=${FIREBASE_PRIVATE_KEY}
-      - FIREBASE_CLIENT_EMAIL=${FIREBASE_CLIENT_EMAIL}
-      
       # Email Configuration
       - SMTP_SERVER=${SMTP_SERVER:-smtp.gmail.com}
       - SMTP_PORT=${SMTP_PORT:-587}
@@ -39,24 +41,36 @@ services:
       - EMAIL_PASSWORD=${EMAIL_PASSWORD}
       - FROM_NAME=${FROM_NAME:-AI Meeting Assistant}
       
-      # Google OAuth
+      # Google OAuth & Calendar
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       
-      # AI Services
+      # AI Services (RapidAPI, Gemini, Groq)
+      - RAPIDAPI_KEY=${RAPIDAPI_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GROQ_API_KEY=${GROQ_API_KEY}
-      - GROQ_API_KEY_FALLBACK=${GROQ_API_KEY_FALLBACK}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GROQ_API_KEY_TWO=${GROQ_API_KEY_TWO}
       
-      # ChromaDB Configuration
-      - CHROMA_HOST=${CHROMA_HOST:-localhost}
-      - CHROMA_PORT=${CHROMA_PORT:-8001}
+      # Chatbot & Voice
+      - GROQ_MODEL=${GROQ_MODEL}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL}
+      - VECTOR_STORE_PATH=${VECTOR_STORE_PATH}
+      - VECTOR_STORE_COLLECTION=${VECTOR_STORE_COLLECTION}
+      - CHATBOT_MAX_CONTEXT_LENGTH=${CHATBOT_MAX_CONTEXT_LENGTH}
+      - VOICE_AI_ENABLED=${VOICE_AI_ENABLED}
+
+      # Security
+      - MAX_FILE_SIZE=${MAX_FILE_SIZE}
+      - ALLOWED_EXTENSIONS=${ALLOWED_EXTENSIONS}
+      - CORS_ORIGINS=${CORS_ORIGINS}
       
       # Application Configuration
       - WEB_CONCURRENCY=${WEB_CONCURRENCY:-4}
       - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-120}
-      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:5173}
-      - BACKEND_URL=${BACKEND_URL:-https://dynamicmeetassistbackend-1.onrender.com}
+      - FRONTEND_URL=${FRONTEND_URL}
+      - BACKEND_URL=${BACKEND_URL}
       
     volumes:
       # Mount logs directory for persistence
