@@ -62,8 +62,6 @@ services:
       # Application Configuration
       - WEB_CONCURRENCY=${WEB_CONCURRENCY:-4}
       - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-120}
-      - FRONTEND_URL=${FRONTEND_URL}
-      - BACKEND_URL=${BACKEND_URL}
       
     volumes:
       # Mount logs directory for persistence
