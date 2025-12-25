@@ -3,7 +3,7 @@
 .env.local
 .env.production
 .env.staging
-
+.env.aws.template
 # Python
 __pycache__/
 *.py[cod]
