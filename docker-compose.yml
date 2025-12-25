@@ -20,13 +20,6 @@ services:
       - ADMIN_EMAIL=${ADMIN_EMAIL}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - ADMIN_NAME=${ADMIN_NAME}
-
-      # Database Configuration (AWS RDS)
-      - DB_HOST=${DB_HOST}
-      - DB_PORT=${DB_PORT:-5432}
-      - DB_NAME=${DB_NAME}
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
       
       # AWS Configuration
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
